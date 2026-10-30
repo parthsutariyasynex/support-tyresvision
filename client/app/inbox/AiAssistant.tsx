@@ -99,14 +99,14 @@ export function AiAssistantPanel({
 
   const button = 'rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50';
   return (
-    <div className="rounded-xl border border-line bg-surface p-3 text-xs" aria-label={view === 'reply' ? 'AI Reply' : 'AI Summary'}>
+    <div className={`rounded-xl border p-3 text-xs ${view === 'summary' ? 'border-[#93c5fd] bg-[#dbeafe]' : 'border-[#bfdbfe] bg-[#eff6ff]'}`} aria-label={view === 'reply' ? 'AI Reply' : 'AI Summary'}>
       {view === 'summary' && canSummarize && (
         <section aria-labelledby="ai-summary-title">
           <div className="flex items-center justify-between gap-2">
             <h3 id="ai-summary-title" className="text-[11px] font-bold uppercase tracking-wide text-ink">
               AI Summary
             </h3>
-            <button type="button" disabled={summaryState !== 'idle'} onClick={() => (summary ? setConfirmRegenerate(true) : void generate())} className={`${button} bg-primary-subtle text-primary hover:bg-primary-subtle/80`}>
+            <button type="button" disabled={summaryState !== 'idle'} onClick={() => (summary ? setConfirmRegenerate(true) : void generate())} className={`${button} bg-[#bfdbfe] text-[#1e40af] hover:bg-[#93c5fd]`}>
               {summaryState === 'busy' ? 'Writing…' : summary ? 'Regenerate' : 'Generate summary'}
             </button>
           </div>
@@ -161,7 +161,7 @@ export function AiAssistantPanel({
             <h3 id="ai-reply-title" className="text-[11px] font-bold uppercase tracking-wide text-ink">
               AI Reply
             </h3>
-            <button type="button" disabled={replyBusy || !!replyBlocked} onClick={draft} className={`${button} bg-primary text-on-primary hover:bg-primary-hover`}>
+            <button type="button" disabled={replyBusy || !!replyBlocked} onClick={draft} className={`${button} bg-[#bfdbfe] text-[#1e40af] hover:bg-[#93c5fd]`}>
               {replyBusy ? 'Writing…' : reply ? 'Try again' : 'AI Reply'}
             </button>
           </div>

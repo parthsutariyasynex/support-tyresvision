@@ -99,3 +99,4 @@ export async function reversePlace(latitude: number, longitude: number, language
   // The point asked about (not where the nearest address is, nor another point that shared the cached answer)
   return place ? { ...place, latitude, longitude } : null;
 }
+
