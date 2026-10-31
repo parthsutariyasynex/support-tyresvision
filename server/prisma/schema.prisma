@@ -451,18 +451,21 @@ model QuickReply {
   shortcut    String    @db.VarChar(255)
   description String?   @db.Text
   category    String?   @db.VarChar(50)
-  // Admin user ids from the TyresCart site, kept as imported
-  createdBy   BigInt?   @map("created_by") @db.UnsignedBigInt
-  updatedBy   BigInt?   @map("updated_by") @db.UnsignedBigInt
+  // Admin user ids from the TyresCart site, kept as imported (null for replies made in this app)
+  siteCreatedBy BigInt?   @map("created_by") @db.UnsignedBigInt
+  siteUpdatedBy BigInt?   @map("updated_by") @db.UnsignedBigInt
   // 1 = enabled, 0 = disabled
-  status      Int       @default(1) @db.SmallInt
-  sortOrder   Int       @default(0) @map("sort_order")
-  createdAt   DateTime? @map("created_at")
-  updatedAt   DateTime? @updatedAt @map("updated_at")
-  // Standard soft-delete columns (our user id; created_by/updated_by hold TyresCart site ids as imported)
-  deletedAt   DateTime? @map("deleted_at")
-  deletedBy   String?   @map("deleted_by")
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  status        Int       @default(1) @db.SmallInt
+  sortOrder     Int       @default(0) @map("sort_order")
+  // --- standard audit fields: our User ids (null for imported rows and system-created ones) ---
+  createdAt     DateTime? @default(now()) @map("created_at")
+  createdBy     String?   @map("created_by_user_id")
+  updatedAt     DateTime? @updatedAt @map("updated_at")
+  updatedBy     String?   @map("updated_by_user_id")
+  // Soft delete (Settings → Saved replies → Delete): the row stays, hidden everywhere
+  deletedAt     DateTime? @map("deleted_at")
+  deletedBy     String?   @map("deleted_by")
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, status, sortOrder])
   @@map("Shortchat")

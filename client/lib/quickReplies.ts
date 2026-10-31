@@ -9,6 +9,14 @@ export async function fetchQuickReplies(search: string) {
   return (await gql<{ quickReplies: QuickReply[] }>(query, { s: search || null })).quickReplies;
 }
 
+// Settings → Saved replies: the same list plus who added / last edited each one and when
+export type SavedReply = QuickReply & { createdAt: string | null; createdByName: string | null; updatedAt: string | null; updatedByName: string | null };
+
+export async function fetchSavedReplies(search: string) {
+  const query = `query SavedReplies($s: String) { quickReplies(search: $s, first: 100) { id shortcut description category createdAt createdByName updatedAt updatedByName } }`;
+  return (await gql<{ quickReplies: SavedReply[] }>(query, { s: search || null })).quickReplies;
+}
+
 // Same rule as the server (case-insensitive partial match on shortcut, text or category), used to narrow
 // results that are still loading so the menu never offers a reply that doesn't match what's typed
 export function matchesQuickReply(reply: QuickReply, search: string) {
@@ -40,3 +48,27 @@ export function highlightParts(text: string, query: string): { text: string; mat
   if (from < text.length) parts.push({ text: text.slice(from), match: false });
   return parts;
 }
+
+// ---- Settings → Saved replies: create / edit / delete (owners, admins and supervisors; the server checks)
+export type QuickReplyInput = { shortcut: string; description: string; category: string | null };
+
+const QUICK_REPLY_FIELDS = 'id shortcut description category';
+
+export async function createQuickReply(input: QuickReplyInput) {
+  const query = `mutation CreateQuickReply($input: CreateQuickReplyInput!) { createQuickReply(input: $input) { ${QUICK_REPLY_FIELDS} } }`;
+  return (await gql<{ createQuickReply: QuickReply }>(query, { input: { ...input, category: input.category ?? '' } })).createQuickReply;
+}
+
+export async function updateQuickReply(id: string, input: Partial<QuickReplyInput>) {
+  const query = `mutation UpdateQuickReply($id: ID!, $input: UpdateQuickReplyInput!) { updateQuickReply(id: $id, input: $input) { ${QUICK_REPLY_FIELDS} } }`;
+  // null category means "clear it": send "" so the server doesn't treat it as "unchanged"
+  const body = 'category' in input ? { ...input, category: input.category ?? '' } : input;
+  return (await gql<{ updateQuickReply: QuickReply }>(query, { id, input: body })).updateQuickReply;
+}
+
+export async function deleteQuickReply(id: string) {
+  await gql(`mutation DeleteQuickReply($id: ID!) { deleteQuickReply(id: $id) }`, { id });
+}
+
+// Same roles the server allows to manage saved replies
+export const canManageQuickReplies = (role: string) => ['owner', 'admin', 'supervisor'].includes(role);
