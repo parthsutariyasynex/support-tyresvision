@@ -61,3 +61,4 @@ client-next-backups/
 server/backups/
 client/app/favicon.ico
 client/app/icon.png
+ /home/tyrescart-connect/htdocs/connect.tyrescart.ae/ecosystem.config.cjs

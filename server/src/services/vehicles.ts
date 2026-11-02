@@ -79,10 +79,15 @@ const updateSchema = detailsSchema.partial();
 const toDay = (v: string | null) => (v ? new Date(`${v}T00:00:00Z`) : null);
 const fromDay = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
-// API shape: dates as yyyy-mm-dd, no workspace or audit ids
+// The id column is BIGINT UNSIGNED; GraphQL's ID! arrives as a string. Anything that isn't all digits can't be a
+// real id, so treat it as "not found" rather than letting BigInt() throw.
+const parseId = (id: string) => (/^\d+$/.test(id) ? BigInt(id) : null);
+
+// API shape: dates as yyyy-mm-dd, no workspace or audit ids. id goes out as a string (GraphQL's ID! — and plain
+// JSON.stringify — can't carry a raw bigint).
 function shape(v: Vehicle) {
   return {
-    id: v.id,
+    id: v.id.toString(),
     contactId: v.contactId,
     plateNumber: v.plateNumber,
     make: v.make,
@@ -171,7 +176,8 @@ export async function addVehicle(auth: AuthPayload, rawInput: unknown) {
 export async function updateVehicle(auth: AuthPayload, id: string, rawInput: unknown) {
   await getPermissions(auth);
   const data = parse(updateSchema, rawInput);
-  const vehicle = await prisma.vehicle.findFirst({ where: { id, workspaceId: auth.workspaceId, deletedAt: null } });
+  const vehicleId = parseId(id);
+  const vehicle = vehicleId !== null ? await prisma.vehicle.findFirst({ where: { id: vehicleId, workspaceId: auth.workspaceId, deletedAt: null } }) : null;
   if (!vehicle) throw notFound('Vehicle');
   const { registrationDate, lastServiceDate, ...rest } = data;
   const updated = await prisma.vehicle.update({
@@ -190,7 +196,8 @@ export async function updateVehicle(auth: AuthPayload, id: string, rawInput: unk
 // Soft delete
 export async function deleteVehicle(auth: AuthPayload, id: string) {
   await getPermissions(auth);
-  const vehicle = await prisma.vehicle.findFirst({ where: { id, workspaceId: auth.workspaceId, deletedAt: null } });
+  const vehicleId = parseId(id);
+  const vehicle = vehicleId !== null ? await prisma.vehicle.findFirst({ where: { id: vehicleId, workspaceId: auth.workspaceId, deletedAt: null } }) : null;
   if (!vehicle) throw notFound('Vehicle');
   await prisma.vehicle.update({
     where: { id: vehicle.id },

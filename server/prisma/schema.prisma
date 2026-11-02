@@ -753,7 +753,7 @@ model PushDevice {
 // lastServiceDate is no longer on the form but kept (existing data); editing a vehicle leaves it as it is.
 // Audit: who added / last changed / deleted it and when (user ids); deleting sets deletedAt/deletedBy (soft delete).
 model Vehicle {
-  id               String    @id @default(cuid())
+  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
   workspaceId      String
   contactId        String
   plateNumber      String?   @db.VarChar(20)
