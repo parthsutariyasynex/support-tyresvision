@@ -27,7 +27,7 @@ export function matchesQuickReply(reply: QuickReply, search: string) {
   return [reply.shortcut, reply.description].some((v) => !!v && v.toLowerCase().includes(t)) || !!category?.includes(t.replace(/_/g, ' '));
 }
 
-// The message box opens the menu when it starts with "/"; the rest is the search ("/tyrescart" -> "tyrescart")
+// The message box opens the menu when it starts with "/"; the rest is the search ("/tyresvision" -> "tyresvision")
 export function slashQuery(text: string): string | null {
   return text.startsWith('/') ? text.slice(1) : null;
 }

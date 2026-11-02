@@ -6,7 +6,7 @@ export const typeDefs = /* GraphQL */ `
   "A canned reply offered when typing / in the message box (WhatsApp Business-style quick replies)"
   type QuickReply {
     id: ID!
-    "Typed after /, e.g. tyrescart"
+    "Typed after /, e.g. tyresvision"
     shortcut: String!
     "The message text it inserts"
     description: String
@@ -28,7 +28,7 @@ export const typeDefs = /* GraphQL */ `
   }
 
   input CreateQuickReplyInput {
-    "Without the /, e.g. tyrescart (letters, numbers, _ and -)"
+    "Without the /, e.g. tyresvision (letters, numbers, _ and -)"
     shortcut: String!
     description: String!
     "Free text, stored lowercase with _ for spaces. Empty or null = none"

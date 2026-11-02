@@ -177,7 +177,7 @@ const buttonSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('URL'),
     text: z.string().trim().min(1, 'Button text is required').max(25, 'Button text: up to 25 characters'),
-    url: z.string().trim().url('Enter a full link, e.g. https://tyrescart.ae/orders/{{1}}').max(2000),
+    url: z.string().trim().url('Enter a full link, e.g. https://www.tyresvision.com/{{1}}').max(2000),
     example: z.string().trim().max(2000).optional(),
   }),
   z.object({

@@ -733,7 +733,7 @@ export function AppShell({
             {/* Bottom Upgrade Pill Card (Hidden for now)
             <div className="p-3 border-t border-line-soft">
               <button
-                onClick={() => alert('Upgrade to TyresCart Pro')}
+                onClick={() => alert('Upgrade to TyresVision Pro')}
                 className="flex w-full items-center justify-between rounded-2xl bg-primary-dark p-2 text-xs font-semibold text-on-primary shadow-sm hover:opacity-95 transition cursor-pointer"
               >
                 <div className="flex items-center gap-2.5">
