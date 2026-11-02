@@ -29,7 +29,7 @@ export function AuthShell({
         <div className="relative z-10 flex items-center justify-between">
           <Link href="/" className="group flex items-center gap-1 text-2xl font-bold tracking-tight text-ink">
             <span>Tyres</span>
-            <span className="text-primary">Cart</span>
+            <span className="text-primary">Vision</span>
             <span className="relative flex items-center justify-center text-primary-hover ml-0.5">
               <svg viewBox="0 0 24 24" className="h-4.5 w-4.5 fill-none stroke-accent stroke-[3.5]" strokeLinecap="round">
                 <circle cx="12" cy="12" r="8" />

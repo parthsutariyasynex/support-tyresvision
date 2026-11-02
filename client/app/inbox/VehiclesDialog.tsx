@@ -1,22 +1,14 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { showToast } from "@/lib/toasts";
-import {
-  type Vehicle,
-  type VehicleCustomer,
-  VEHICLES_EVENT,
-  addVehicle,
-  deleteVehicle,
-  listVehicles,
-  searchVehicleCustomers,
-  vehicleTitle,
-} from "@/lib/vehicles";
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { showToast } from '@/lib/toasts';
+import { type Vehicle, type VehicleCustomer, VEHICLES_EVENT, addVehicle, deleteVehicle, listVehicles, updateVehicle, vehicleTitle } from '@/lib/vehicles';
+import { CountryFlag } from './CountryFlag';
 
 // The TyresCart car (sized by width only; the height follows its 2.8:1 ratio)
 export const CarIcon = ({
-  className = "w-[1.375rem]",
+  className = 'w-[1.375rem]',
 }: {
   className?: string;
 }) => (
@@ -41,205 +33,193 @@ export const CarIcon = ({
   </svg>
 );
 
-const customerLabel = (c: VehicleCustomer) =>
-  c.name ? `${c.name} · +${c.waId}` : `+${c.waId}`;
+// "Toyota Land Cruiser 2022 (A 12345)": the plate only when there is one
+const vehicleName = (v: Vehicle) => (v.plateNumber ? `${vehicleTitle(v)} (${v.plateNumber})` : vehicleTitle(v));
 
-// Today in the viewer's own time zone, for the date pickers' max
+// "15 Mar 2024" from yyyy-mm-dd (a calendar day: no time zone shift)
+const dayLabel = (v: string) => new Date(`${v}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+// Today in the viewer's own time zone, for the date picker's max
 function localToday() {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-type Form = {
-  customer: VehicleCustomer | null;
-  plateNumber: string;
-  year: string;
-  make: string;
-  model: string;
-  registrationDate: string;
-  lastServiceDate: string;
-  tireSize1: string;
-  tireSize2: string;
-};
-type Field = keyof Form;
-
-function validate(f: Form): Partial<Record<Field, string>> {
-  const errors: Partial<Record<Field, string>> = {};
-  if (!f.customer) errors.customer = "Choose a CRM customer";
-  if (!f.plateNumber.trim()) errors.plateNumber = "Enter the plate number";
-  if (!f.make.trim()) errors.make = "Enter the make";
-  if (!f.model.trim()) errors.model = "Enter the model";
-  if (!f.year.trim()) errors.year = "Enter the year";
-  else if (!/^\d{4}$/.test(f.year.trim())) errors.year = "Enter a 4-digit year";
-  if (!f.tireSize1.trim()) errors.tireSize1 = "Enter tire size 1";
-  return errors;
-}
-
-// "Add vehicle" (formOnly: straight to the form for this customer) or "Vehicles" (the customer's list + Add vehicle)
-export function VehiclesDialog({
-  customer,
-  onClose,
-  formOnly = false,
-}: {
-  customer: VehicleCustomer;
-  onClose: () => void;
-  formOnly?: boolean;
-}) {
-  const [adding, setAdding] = useState(formOnly);
+// The customer's vehicles: who (name, WhatsApp number) at the top, every saved vehicle with Edit and Delete, and the
+// form below to add another one (or edit the chosen one). The customer always comes from the open chat; nobody types
+// it in. Reloads live when anyone adds, edits or deletes one of this customer's vehicles.
+export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustomer; onClose: () => void }) {
   const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [listError, setListError] = useState("");
+  const [listError, setListError] = useState('');
+  const [editing, setEditing] = useState<Vehicle | null>(null);
+  const [formRound, setFormRound] = useState(0); // a new number = an empty form again
+  const [saving, setSaving] = useState(false);
   const titleId = useId();
+  const formRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(
     () =>
       listVehicles(customer.id)
         .then((v) => {
           setVehicles(v);
-          setListError("");
+          setListError('');
         })
         .catch((e) => setListError((e as Error).message)),
     [customer.id],
   );
   useEffect(() => {
-    if (formOnly) return;
     load();
-    const onChanged = (e: Event) =>
-      (e as CustomEvent<{ contactId: string }>).detail?.contactId ===
-        customer.id && load();
+    const onChanged = (e: Event) => (e as CustomEvent<{ contactId: string }>).detail?.contactId === customer.id && load();
     window.addEventListener(VEHICLES_EVENT, onChanged);
     return () => window.removeEventListener(VEHICLES_EVENT, onChanged);
-  }, [formOnly, load, customer.id]);
+  }, [load, customer.id]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) =>
-      e.key === "Escape" && !e.defaultPrevented && !busy && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !saving && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [saving, onClose]);
 
-  if (typeof document === "undefined") return null;
+  const startEdit = (v: Vehicle) => {
+    setEditing(v);
+    // The form is below the list: bring it into view
+    setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  };
+  const resetForm = () => {
+    setEditing(null);
+    setFormRound((n) => n + 1);
+  };
+
+  const count = vehicles?.length ?? 0;
+  const name = customer.name?.trim() || `+${customer.waId}`;
+  if (typeof document === 'undefined') return null;
   return createPortal(
-    <div
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-shadow/40 p-4 sm:items-center"
-      onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl"
-      >
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-shadow/40 p-4 sm:items-start sm:pt-[6dvh]" onMouseDown={(e) => e.target === e.currentTarget && !saving && onClose()}>
+      <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="flex max-h-[92dvh] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl sm:max-h-[88dvh]">
+        {/* Customer: from the open chat */}
         <div className="flex shrink-0 items-center gap-3 border-b border-line-soft px-5 py-4">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary">
             <CarIcon className="w-7" />
           </span>
           <div className="min-w-0 flex-1">
-            <h2
-              id={titleId}
-              className="text-[15px] font-bold leading-tight text-ink"
-            >
-              {adding ? "Add vehicle" : "Vehicles"}
+            <h2 id={titleId} className="truncate text-[15px] font-bold leading-tight text-ink">
+              {name}
             </h2>
-            <p className="mt-0.5 truncate text-[13px] text-muted">
-              {customer.name || `+${customer.waId}`}
+            <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[13px] text-muted">
+              <CountryFlag waId={customer.waId} />
+              {/* The number is already the title when the customer hasn't shared a name */}
+              <span className="truncate">{customer.name?.trim() ? `+${customer.waId}` : 'WhatsApp contact'}</span>
+              {vehicles && (
+                <span className="shrink-0">
+                  · {count} {count === 1 ? 'vehicle' : 'vehicles'}
+                </span>
+              )}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-body-soft hover:bg-surface-muted disabled:opacity-50"
-          >
-            <svg
-              className="h-5 w-5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
+          <button type="button" onClick={onClose} disabled={saving} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-body-soft hover:bg-surface-muted disabled:opacity-50">
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        {adding ? (
-          <VehicleForm
-            initialCustomer={customer}
-            fixedCustomer={formOnly}
-            busy={busy}
-            setBusy={setBusy}
-            onCancel={() => (formOnly ? onClose() : setAdding(false))}
-            onSaved={() => {
-              showToast(`vehicle:${Date.now()}`, "", "Vehicle added");
-              if (formOnly) onClose();
-              else {
-                setAdding(false);
-                load();
-              }
-            }}
-          />
-        ) : (
-          <div className="min-h-0 overflow-y-auto px-5 py-4">
-            {listError && (
-              <p className="mb-3 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">
-                {listError}
-              </p>
-            )}
-            {vehicles === null ? (
-              !listError && (
-                <p className="py-6 text-center text-xs text-muted">
-                  Loading vehicles…
-                </p>
-              )
-            ) : vehicles.length === 0 ? (
-              <p className="py-6 text-center text-xs text-muted">
-                No vehicles yet.
-              </p>
-            ) : (
-              <ul className="divide-y divide-line-soft rounded-xl border border-line">
-                {vehicles.map((v) => (
-                  <VehicleRow key={v.id} vehicle={v} onDeleted={load} />
-                ))}
-              </ul>
-            )}
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setAdding(true)}
-                className="rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-on-primary hover:bg-primary-hover"
-              >
-                + Add vehicle
-              </button>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {/* Saved vehicles */}
+          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Saved vehicles{vehicles ? ` (${count})` : ''}</h3>
+          {listError && <p className="mt-2 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{listError}</p>}
+          {vehicles === null ? (
+            !listError && (
+              <div className="mt-2 rounded-xl border border-line px-4 py-3" role="status" aria-label="Loading vehicles">
+                <div className="h-4 w-48 animate-pulse rounded bg-surface-strong" />
+                <div className="mt-2.5 h-3 w-64 max-w-full animate-pulse rounded bg-surface-strong" />
+              </div>
+            )
+          ) : count === 0 ? (
+            <p className="mt-2 rounded-xl border border-dashed border-line px-4 py-5 text-center text-xs text-muted">No vehicles yet. Add the first one below.</p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {vehicles.map((v) => (
+                <VehicleCard
+                  key={v.id}
+                  vehicle={v}
+                  isEditing={editing?.id === v.id}
+                  onEdit={() => startEdit(v)}
+                  onDeleted={() => {
+                    if (editing?.id === v.id) resetForm();
+                    load();
+                  }}
+                />
+              ))}
+            </ul>
+          )}
+
+          {/* Add another vehicle, or edit the chosen one */}
+          <section ref={formRef} className="mt-5 scroll-mt-4 border-t border-line-soft pt-4">
+            <div className="mb-3 flex h-6 items-center justify-between gap-2">
+              <h3 className="flex min-w-0 items-center text-[11px] font-semibold uppercase tracking-wide text-muted">
+                {editing ? (
+                  <>
+                    <span className="shrink-0">Edit vehicle:</span>
+                    <span className="ml-1.5 truncate normal-case tracking-normal text-[13px] font-bold text-ink">{vehicleTitle(editing)}</span>
+                    {editing.plateNumber && <span className="ml-2 shrink-0 rounded border border-line bg-surface-strong px-1.5 py-px font-mono text-[11px] font-semibold normal-case tracking-wide text-body">{editing.plateNumber}</span>}
+                  </>
+                ) : count ? (
+                  'Add another vehicle'
+                ) : (
+                  'Add vehicle'
+                )}
+              </h3>
+              {editing && (
+                <button type="button" disabled={saving} onClick={resetForm} className="shrink-0 text-[12px] font-medium text-primary hover:underline disabled:opacity-50">
+                  + Add new instead
+                </button>
+              )}
             </div>
-          </div>
-        )}
+            <VehicleForm
+              key={editing ? `edit-${editing.id}` : `new-${formRound}`}
+              contactId={customer.id}
+              vehicle={editing}
+              onSavingChange={setSaving}
+              onSaved={(wasEdit) => {
+                showToast(`vehicle:${Date.now()}`, '', wasEdit ? 'Vehicle updated' : 'Vehicle added');
+                resetForm();
+                load();
+              }}
+            />
+          </section>
+        </div>
+
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line-soft px-5 py-3">
+          {editing ? (
+            <button type="button" disabled={saving} onClick={resetForm} className="min-w-24 rounded-lg px-4 py-2 text-[13px] font-medium text-body hover:bg-surface-strong disabled:opacity-50">
+              Cancel edit
+            </button>
+          ) : (
+            <button type="button" disabled={saving} onClick={onClose} className="min-w-24 rounded-lg px-4 py-2 text-[13px] font-medium text-body hover:bg-surface-strong disabled:opacity-50">
+              Close
+            </button>
+          )}
+          <button type="submit" form="vehicle-form" disabled={saving} className="min-w-32 rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-50">
+            {saving ? 'Saving…' : editing ? 'Save changes' : 'Add vehicle'}
+          </button>
+        </div>
       </div>
     </div>,
     document.body,
   );
 }
 
-// One vehicle in the list; Delete asks "Delete?" first (shown on hover / focus)
-function VehicleRow({
-  vehicle: v,
-  onDeleted,
-}: {
-  vehicle: Vehicle;
-  onDeleted: () => void;
-}) {
+// One saved vehicle: make, model, year, plate, tyres, registration date and remarks; Edit and Delete (asks first)
+function VehicleCard({ vehicle: v, isEditing, onEdit, onDeleted }: { vehicle: Vehicle; isEditing: boolean; onEdit: () => void; onDeleted: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   async function remove() {
     setBusy(true);
-    setError("");
+    setError('');
     try {
       await deleteVehicle(v.id);
-      showToast(`vehicle:${Date.now()}`, "", "Vehicle deleted");
+      showToast(`vehicle:${Date.now()}`, '', 'Vehicle deleted');
       onDeleted();
     } catch (e) {
       setError((e as Error).message);
@@ -247,378 +227,186 @@ function VehicleRow({
       setConfirming(false);
     }
   }
+  const iconButton = 'flex h-8 w-8 items-center justify-center rounded-lg text-body-soft transition hover:bg-surface-muted disabled:opacity-50';
   return (
-    <li className="group flex items-start gap-3 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13px] font-semibold text-ink">
-            {vehicleTitle(v)}
-          </span>
-          <span className="rounded border border-line bg-surface-strong px-1.5 py-px font-mono text-[11px] font-semibold tracking-wide text-body">
-            {v.plateNumber}
-          </span>
+    <li className={`rounded-xl border px-4 py-3 transition ${isEditing ? 'border-primary bg-primary-subtle' : 'border-line bg-surface'}`}>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] font-semibold text-ink">{vehicleTitle(v)}</span>
+            {v.plateNumber && <span className="rounded border border-line bg-surface-strong px-1.5 py-px font-mono text-[11px] font-semibold tracking-wide text-body">{v.plateNumber}</span>}
+            {isEditing && <span className="rounded-full bg-primary px-2 py-px text-[10px] font-semibold text-on-primary">Editing</span>}
+          </div>
+          <dl className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-2">
+            <div className="flex gap-1.5">
+              <dt className="shrink-0 text-muted">Tyre size 1:</dt>
+              <dd className="text-body">{v.tireSize1}</dd>
+            </div>
+            {v.tireSize2 && (
+              <div className="flex gap-1.5">
+                <dt className="shrink-0 text-muted">Tyre size 2:</dt>
+                <dd className="text-body">{v.tireSize2}</dd>
+              </div>
+            )}
+            {v.registrationDate && (
+              <div className="flex gap-1.5">
+                <dt className="shrink-0 text-muted">Registered:</dt>
+                <dd className="text-body">{dayLabel(v.registrationDate)}</dd>
+              </div>
+            )}
+            {v.lastServiceDate && (
+              <div className="flex gap-1.5">
+                <dt className="shrink-0 text-muted">Last service:</dt>
+                <dd className="text-body">{dayLabel(v.lastServiceDate)}</dd>
+              </div>
+            )}
+          </dl>
+          {v.remarks && <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap rounded-lg bg-surface-muted px-2.5 py-1.5 text-xs text-body">{v.remarks}</p>}
+          {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
         </div>
-        <p className="mt-0.5 text-xs text-body-soft">
-          Tires: {v.tireSize1}
-          {v.tireSize2 && ` · ${v.tireSize2}`}
-        </p>
-        {(v.registrationDate || v.lastServiceDate) && (
-          <p className="mt-0.5 text-[11px] text-muted">
-            {[
-              v.registrationDate && `Registered ${v.registrationDate}`,
-              v.lastServiceDate &&
-                `Last purchase / service ${v.lastServiceDate}`,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
+        {confirming ? (
+          <span className="flex h-8 shrink-0 items-center gap-1">
+            <span className="mr-1 text-xs text-body">Delete?</span>
+            <button type="button" disabled={busy} onClick={() => setConfirming(false)} className="rounded-md px-2 py-1 text-xs text-body-soft hover:bg-surface-muted disabled:opacity-50">
+              Cancel
+            </button>
+            <button type="button" disabled={busy} onClick={remove} className="min-w-16 rounded-md bg-danger px-2.5 py-1 text-xs font-semibold text-on-primary disabled:opacity-50">
+              {busy ? 'Deleting…' : 'Delete'}
+            </button>
+          </span>
+        ) : (
+          <span className="flex shrink-0 gap-0.5">
+            <button type="button" onClick={onEdit} aria-label={`Edit ${vehicleName(v)}`} title="Edit" className={`${iconButton} hover:text-ink`}>
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" />
+              </svg>
+            </button>
+            <button type="button" onClick={() => setConfirming(true)} aria-label={`Delete ${vehicleName(v)}`} title="Delete" className={`${iconButton} hover:text-danger`}>
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" />
+              </svg>
+            </button>
+          </span>
         )}
-        {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
       </div>
-      {confirming ? (
-        <span className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={remove}
-            className="rounded-md bg-danger px-2.5 py-1 text-[11px] font-semibold text-on-primary disabled:opacity-50"
-          >
-            {busy ? "Deleting…" : "Delete"}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => setConfirming(false)}
-            className="rounded-md px-2 py-1 text-[11px] text-body-soft hover:bg-surface-muted"
-          >
-            Cancel
-          </button>
-        </span>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          aria-label={`Delete ${vehicleTitle(v)} (${v.plateNumber})`}
-          title="Delete"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-body-soft opacity-0 transition group-hover:opacity-100 hover:bg-surface-muted hover:text-danger focus:opacity-100"
-        >
-          <svg
-            className="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" />
-          </svg>
-        </button>
-      )}
     </li>
   );
 }
 
+type Form = { make: string; model: string; year: string; plateNumber: string; registrationDate: string; tireSize1: string; tireSize2: string; remarks: string };
+type Field = keyof Form;
+
+function validate(f: Form): Partial<Record<Field, string>> {
+  const errors: Partial<Record<Field, string>> = {};
+  const maxYear = new Date().getFullYear() + 1;
+  if (!f.make.trim()) errors.make = 'Enter the make';
+  if (!f.model.trim()) errors.model = 'Enter the model';
+  if (!f.year.trim()) errors.year = 'Enter the year';
+  else if (!/^\d{4}$/.test(f.year.trim())) errors.year = 'Enter a 4-digit year';
+  else if (+f.year < 1900 || +f.year > maxYear) errors.year = `Enter a year from 1900 to ${maxYear}`;
+  if (!f.tireSize1.trim()) errors.tireSize1 = 'Enter tyre size 1';
+  return errors;
+}
+
+// Add (vehicle = null) or edit one. The submit button is the dialog's footer button (form="vehicle-form").
 function VehicleForm({
-  initialCustomer,
-  fixedCustomer,
-  busy,
-  setBusy,
-  onCancel,
+  contactId,
+  vehicle,
+  onSavingChange,
   onSaved,
 }: {
-  initialCustomer: VehicleCustomer;
-  fixedCustomer: boolean;
-  busy: boolean;
-  setBusy: (b: boolean) => void;
-  onCancel: () => void;
-  onSaved: () => void;
+  contactId: string;
+  vehicle: Vehicle | null;
+  onSavingChange: (saving: boolean) => void;
+  onSaved: (wasEdit: boolean) => void;
 }) {
   const [form, setForm] = useState<Form>({
-    customer: initialCustomer,
-    plateNumber: "",
-    year: "",
-    make: "",
-    model: "",
-    registrationDate: "",
-    lastServiceDate: "",
-    tireSize1: "",
-    tireSize2: "",
+    make: vehicle?.make ?? '',
+    model: vehicle?.model ?? '',
+    year: vehicle ? String(vehicle.year) : '',
+    plateNumber: vehicle?.plateNumber ?? '',
+    registrationDate: vehicle?.registrationDate ?? '',
+    tireSize1: vehicle?.tireSize1 ?? '',
+    tireSize2: vehicle?.tireSize2 ?? '',
+    remarks: vehicle?.remarks ?? '',
   });
   const [submitted, setSubmitted] = useState(false);
-  const [serverError, setServerError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [serverError, setServerError] = useState('');
   const errors = submitted ? validate(form) : {};
   const today = localToday();
-  const set = <K extends Field>(k: K, v: Form[K]) =>
-    setForm((f) => ({ ...f, [k]: v }));
+  const set = (k: Field, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitted(true);
     if (busy || Object.keys(validate(form)).length) return;
     setBusy(true);
-    setServerError("");
+    onSavingChange(true);
+    setServerError('');
+    const details = {
+      make: form.make.trim(),
+      model: form.model.trim(),
+      year: Number(form.year.trim()),
+      plateNumber: form.plateNumber.trim().toUpperCase() || null,
+      registrationDate: form.registrationDate || null,
+      tireSize1: form.tireSize1.trim(),
+      tireSize2: form.tireSize2.trim() || null,
+      remarks: form.remarks.trim() || null,
+    };
     try {
-      await addVehicle({
-        contactId: form.customer!.id,
-        plateNumber: form.plateNumber.trim().toUpperCase(),
-        make: form.make.trim(),
-        model: form.model.trim(),
-        year: Number(form.year.trim()),
-        registrationDate: form.registrationDate || null,
-        lastServiceDate: form.lastServiceDate || null,
-        tireSize1: form.tireSize1.trim(),
-        tireSize2: form.tireSize2.trim() || null,
-      });
-      setBusy(false);
-      onSaved();
+      if (vehicle) await updateVehicle(vehicle.id, details);
+      else await addVehicle({ ...details, contactId });
+      onSavingChange(false);
+      onSaved(!!vehicle);
     } catch (err) {
       setServerError((err as Error).message);
       setBusy(false);
+      onSavingChange(false);
     }
   }
 
-  const input = (bad: boolean) =>
-    `h-[38px] w-full rounded-lg border bg-surface px-3 text-[13px] text-ink outline-hidden placeholder:text-faint focus:ring-1 ${bad ? "border-danger focus:border-danger focus:ring-danger" : "border-line focus:border-primary focus:ring-primary"}`;
+  const inputClass = (bad: boolean) =>
+    `h-[38px] w-full rounded-lg border bg-surface px-3 text-[13px] text-ink outline-hidden placeholder:text-faint focus:ring-1 ${bad ? 'border-danger focus:border-danger focus:ring-danger' : 'border-line focus:border-primary focus:ring-primary'}`;
   const label = (id: string, text: string, required: boolean) => (
-    <label
-      htmlFor={id}
-      className="mb-1.5 block text-[11px] font-semibold text-body-soft"
-    >
+    <label htmlFor={id} className="mb-1.5 block truncate text-[11px] font-semibold text-body-soft">
       {text}
-      {required ? (
-        <span className="text-danger"> *</span>
-      ) : (
-        <span className="font-normal text-faint"> (optional)</span>
-      )}
+      {required ? <span className="text-danger"> *</span> : <span className="font-normal text-faint"> (optional)</span>}
     </label>
   );
-  const problem = (k: Field) =>
-    errors[k] && <p className="mt-1 text-[11px] text-danger">{errors[k]}</p>;
-  const textField = (
-    k: Exclude<Field, "customer">,
-    text: string,
-    required: boolean,
-    extra: React.InputHTMLAttributes<HTMLInputElement> = {},
-  ) => (
-    <div>
+  const problem = (k: Field) => errors[k] && <p className="mt-1 text-[11px] text-danger">{errors[k]}</p>;
+  const field = (k: Exclude<Field, 'remarks'>, text: string, required: boolean, span: string, extra: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
+    <div className={span}>
       {label(`vehicle-${k}`, text, required)}
-      <input
-        id={`vehicle-${k}`}
-        value={form[k]}
-        onChange={(e) => set(k, e.target.value)}
-        aria-invalid={!!errors[k]}
-        className={input(!!errors[k])}
-        {...extra}
-      />
+      <input id={`vehicle-${k}`} value={form[k]} onChange={(e) => set(k, e.target.value)} aria-invalid={!!errors[k]} className={inputClass(!!errors[k])} {...extra} />
       {problem(k)}
     </div>
   );
 
   return (
-    <form onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 overflow-y-auto px-5 py-4">
-        <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            {label("vehicle-customer", "CRM Customer", true)}
-            {fixedCustomer ? (
-              <p
-                id="vehicle-customer"
-                className="flex h-[38px] items-center rounded-lg border border-line bg-surface-muted px-3 text-[13px] text-ink"
-              >
-                {customerLabel(initialCustomer)}
-              </p>
-            ) : (
-              <CustomerPicker
-                value={form.customer}
-                onChange={(c) => set("customer", c)}
-                invalid={!!errors.customer}
-              />
-            )}
-            {problem("customer")}
-          </div>
-          {textField("plateNumber", "Plate Number", true, {
-            maxLength: 20,
-            placeholder: "e.g. A 12345",
-            autoFocus: true,
-            style: { textTransform: form.plateNumber ? "uppercase" : "none" },
-          })}
-          {textField("year", "Year", true, {
-            inputMode: "numeric",
-            maxLength: 4,
-            placeholder: "e.g. 2022",
-            onChange: (e) =>
-              set("year", e.target.value.replace(/\D/g, "").slice(0, 4)),
-          })}
-          {textField("make", "Make", true, {
-            maxLength: 60,
-            placeholder: "e.g. Toyota",
-          })}
-          {textField("model", "Model", true, {
-            maxLength: 60,
-            placeholder: "e.g. Land Cruiser",
-          })}
-          {textField("registrationDate", "Registration Date", false, {
-            type: "date",
-            max: today,
-          })}
-          {textField("lastServiceDate", "Last Purchase / Service Date", false, {
-            type: "date",
-            max: today,
-          })}
-          {textField("tireSize1", "Tire Size 1", true, {
-            maxLength: 30,
-            placeholder: "e.g. 265/65 R17",
-          })}
-          {textField("tireSize2", "Tire Size 2", false, {
-            maxLength: 30,
-            placeholder: "Rear, if different",
-          })}
+    <form id="vehicle-form" onSubmit={submit} noValidate>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
+        {field('make', 'Make', true, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Toyota', autoFocus: !vehicle })}
+        {field('model', 'Model', true, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Land Cruiser' })}
+        {field('year', 'Year', true, 'col-span-1', { inputMode: 'numeric', maxLength: 4, placeholder: 'e.g. 2022', onChange: (e) => set('year', e.target.value.replace(/\D/g, '').slice(0, 4)) })}
+        {field('plateNumber', 'Plate Number', false, 'col-span-1', { maxLength: 20, placeholder: 'e.g. A 12345', style: { textTransform: form.plateNumber ? 'uppercase' : 'none' } })}
+        {field('registrationDate', 'Registration Date', false, 'col-span-2', { type: 'date', max: today })}
+        {field('tireSize1', 'Tyre Size 1', true, 'col-span-2', { maxLength: 30, placeholder: 'e.g. 265/65 R17' })}
+        {field('tireSize2', 'Tyre Size 2', false, 'col-span-2', { maxLength: 30, placeholder: 'Rear, if different' })}
+        <div className="col-span-2 sm:col-span-4">
+          {label('vehicle-remarks', 'Remarks', false)}
+          <textarea
+            id="vehicle-remarks"
+            value={form.remarks}
+            onChange={(e) => set('remarks', e.target.value)}
+            rows={3}
+            placeholder="e.g. Prefers Michelin, rotates tyres every 10,000 km"
+            className="w-full resize-y rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink outline-hidden placeholder:text-faint focus:border-primary focus:ring-1 focus:ring-primary"
+          />
         </div>
-        {serverError && (
-          <p className="mt-4 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">
-            {serverError}
-          </p>
-        )}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line-soft px-5 py-3">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="rounded-lg px-4 py-2 text-[13px] font-medium text-body hover:bg-surface-strong disabled:opacity-50"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-50"
-        >
-          {busy ? "Saving…" : "Add vehicle"}
-        </button>
-      </div>
+      {serverError && <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{serverError}</p>}
     </form>
-  );
-}
-
-// Searchable CRM customer (name or WhatsApp number), 250 ms after typing; ↑ ↓ Enter Esc
-function CustomerPicker({
-  value,
-  onChange,
-  invalid,
-}: {
-  value: VehicleCustomer | null;
-  onChange: (c: VehicleCustomer | null) => void;
-  invalid: boolean;
-}) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<VehicleCustomer[]>([]);
-  const [active, setActive] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const listId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    setLoading(true);
-    const t = setTimeout(() => {
-      searchVehicleCustomers(query)
-        .then((r) => {
-          setResults(r);
-          setActive(0);
-        })
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [query, open]);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) =>
-      !ref.current?.contains(e.target as Node) && setOpen(false);
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
-
-  const choose = (c: VehicleCustomer) => {
-    onChange(c);
-    setOpen(false);
-    setQuery("");
-  };
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (!open) setOpen(true);
-      else setActive((a) => Math.min(a + 1, results.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActive((a) => Math.max(a - 1, 0));
-    } else if (e.key === "Enter" && open) {
-      e.preventDefault();
-      if (results[active]) choose(results[active]);
-    } else if (e.key === "Escape" && open) {
-      // Close only the list, not the whole dialog
-      e.preventDefault();
-      e.nativeEvent.stopImmediatePropagation();
-      setOpen(false);
-    }
-  }
-
-  const border = invalid
-    ? "border-danger"
-    : "border-line focus-within:border-primary";
-  return (
-    <div ref={ref} className="relative">
-      <input
-        id="vehicle-customer"
-        role="combobox"
-        aria-expanded={open}
-        aria-controls={listId}
-        aria-autocomplete="list"
-        aria-invalid={invalid}
-        value={open ? query : value ? customerLabel(value) : ""}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-        onKeyDown={onKeyDown}
-        placeholder="Search by name or WhatsApp number"
-        className={`h-[38px] w-full rounded-lg border bg-surface px-3 text-[13px] text-ink outline-hidden placeholder:text-faint ${border}`}
-      />
-      {open && (
-        <ul
-          id={listId}
-          role="listbox"
-          className="absolute left-0 right-0 top-full z-10 mt-1 max-h-60 overflow-y-auto rounded-xl border border-line bg-surface py-1 shadow-xl"
-        >
-          {results.map((c, i) => (
-            <li key={c.id} role="option" aria-selected={i === active}>
-              <button
-                type="button"
-                onMouseEnter={() => setActive(i)}
-                onClick={() => choose(c)}
-                className={`flex w-full flex-col px-3 py-2 text-left ${i === active ? "bg-surface-muted" : ""}`}
-              >
-                <span className="truncate text-[13px] text-ink">
-                  {c.name || `+${c.waId}`}
-                </span>
-                {c.name && (
-                  <span className="text-[11px] text-muted">+{c.waId}</span>
-                )}
-              </button>
-            </li>
-          ))}
-          {!results.length && (
-            <li className="px-3 py-2 text-xs text-muted">
-              {loading ? "Searching…" : "No customer matches."}
-            </li>
-          )}
-        </ul>
-      )}
-    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { addVehicle, deleteVehicle, listVehicles, searchVehicleCustomers } from '../services/vehicles.js';
+import { addVehicle, deleteVehicle, listVehicles, searchVehicleCustomers, updateVehicle } from '../services/vehicles.js';
 import { authed } from './shared.js';
 
 export const typeDefs = /* GraphQL */ `
@@ -7,7 +7,7 @@ export const typeDefs = /* GraphQL */ `
     id: ID!
     contactId: ID!
     "Uppercase, e.g. DUBAI A 12345"
-    plateNumber: String!
+    plateNumber: String
     make: String!
     model: String!
     year: Int!
@@ -17,7 +17,10 @@ export const typeDefs = /* GraphQL */ `
     lastServiceDate: String
     tireSize1: String!
     tireSize2: String
+    "Free-text notes about this vehicle"
+    remarks: String
     createdAt: DateTime!
+    updatedAt: DateTime!
   }
 
   "A contact offered by the CRM Customer picker"
@@ -29,7 +32,7 @@ export const typeDefs = /* GraphQL */ `
 
   input VehicleInput {
     contactId: ID!
-    plateNumber: String!
+    plateNumber: String
     make: String!
     model: String!
     year: Int!
@@ -39,6 +42,20 @@ export const typeDefs = /* GraphQL */ `
     lastServiceDate: String
     tireSize1: String!
     tireSize2: String
+    remarks: String
+  }
+
+  "Edit: only the fields sent change; null clears an optional one"
+  input UpdateVehicleInput {
+    plateNumber: String
+    make: String
+    model: String
+    year: Int
+    registrationDate: String
+    lastServiceDate: String
+    tireSize1: String
+    tireSize2: String
+    remarks: String
   }
 
   extend type Query {
@@ -50,6 +67,7 @@ export const typeDefs = /* GraphQL */ `
 
   extend type Mutation {
     addVehicle(input: VehicleInput!): Vehicle!
+    updateVehicle(id: ID!, input: UpdateVehicleInput!): Vehicle!
     "Soft delete"
     deleteVehicle(id: ID!): Boolean!
   }
@@ -62,6 +80,7 @@ export const resolvers = {
   },
   Mutation: {
     addVehicle: authed(({ input }: { input: unknown }, auth) => addVehicle(auth, input)),
+    updateVehicle: authed(({ id, input }: { id: string; input: unknown }, auth) => updateVehicle(auth, id, input)),
     deleteVehicle: authed(({ id }: { id: string }, auth) => deleteVehicle(auth, id)),
   },
 };

@@ -8,15 +8,16 @@ import { notFound } from './errors.js';
 import { getPermissions } from './permissions.js';
 import { parse } from './validate.js';
 
-// A customer's vehicles (chat header car button, contact profile "Add Vehicle"). Every member can list, add and
-// delete them; deleting is a soft delete (deletedAt/deletedBy), so nothing is lost.
+// A customer's vehicles (chat header car button, contact profile "Add Vehicle"). Every member can list, add, edit
+// and delete them; deleting is a soft delete (deletedAt/deletedBy), so nothing is lost. Every vehicle belongs to one
+// contact of the caller's workspace (workspaceId always comes from the login, never from the input).
 
 // Optional text: trimmed, empty → null
 const text = (max: number, label: string) =>
   z
     .string()
     .trim()
-    .max(max, `The ${label} is too long (${max} characters max)`)
+    .max(max, `Keep the ${label} to ${max} characters or fewer`)
     .nullish()
     .transform((v) => v || null);
 
@@ -25,7 +26,7 @@ const requiredText = (max: number, label: string) =>
     .string({ error: `Enter the ${label}` })
     .trim()
     .min(1, `Enter the ${label}`)
-    .max(max, `The ${label} is too long (${max} characters max)`);
+    .max(max, `Keep the ${label} to ${max} characters or fewer`);
 
 // The latest calendar day anywhere on Earth (UTC+14), so "today" in the user's own time zone is never refused
 const latestToday = () => new Date(Date.now() + 14 * 3600_000).toISOString().slice(0, 10);
@@ -45,9 +46,10 @@ const day = (label: string) =>
     }, `The ${label} is not a real date`)
     .refine((v) => v === null || v <= latestToday(), `The ${label} can't be in the future`);
 
-const vehicleSchema = z.object({
-  contactId: z.string({ error: 'Choose a CRM customer' }).trim().min(1, 'Choose a CRM customer'),
-  plateNumber: requiredText(20, 'plate number').transform((v) => v.toUpperCase()),
+// The vehicle's own details (shared by add and edit)
+const detailsSchema = z.object({
+  // Optional; stored uppercase, empty → null
+  plateNumber: text(20, 'plate number').transform((v) => v?.toUpperCase() ?? null),
   make: requiredText(60, 'make'),
   model: requiredText(60, 'model'),
   year: z
@@ -57,9 +59,22 @@ const vehicleSchema = z.object({
     .refine((y) => y <= new Date().getUTCFullYear() + 1, 'Enter the year'),
   registrationDate: day('registration date'),
   lastServiceDate: day('last purchase / service date'),
-  tireSize1: z.string({ error: 'Enter tire size 1' }).trim().min(1, 'Enter tire size 1').max(30, 'Tire size 1 is too long (30 characters max)'),
-  tireSize2: text(30, 'tire size 2'),
+  tireSize1: z.string({ error: 'Enter tyre size 1' }).trim().min(1, 'Enter tyre size 1').max(30, 'Keep tyre size 1 to 30 characters or fewer'),
+  tireSize2: text(30, 'tyre size 2'),
+  // No length limit on the form; only what the TEXT column holds (65,535 bytes: an emoji or Arabic letter takes 2-4)
+  remarks: z
+    .string()
+    .trim()
+    .nullish()
+    .transform((v) => v || null)
+    .refine((v) => v === null || Buffer.byteLength(v, 'utf8') <= 65535, 'The remarks are too long to save. Shorten them and try again.'),
 });
+
+const vehicleSchema = detailsSchema.extend({
+  contactId: z.string({ error: 'Choose a CRM customer' }).trim().min(1, 'Choose a CRM customer'),
+});
+// Edit: only the fields sent change (a vehicle never moves to another contact)
+const updateSchema = detailsSchema.partial();
 
 const toDay = (v: string | null) => (v ? new Date(`${v}T00:00:00Z`) : null);
 const fromDay = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
@@ -77,7 +92,9 @@ function shape(v: Vehicle) {
     lastServiceDate: fromDay(v.lastServiceDate),
     tireSize1: v.tireSize1,
     tireSize2: v.tireSize2,
+    remarks: v.remarks,
     createdAt: v.createdAt,
+    updatedAt: v.updatedAt,
   };
 }
 
@@ -141,12 +158,33 @@ export async function addVehicle(auth: AuthPayload, rawInput: unknown) {
       lastServiceDate: toDay(data.lastServiceDate),
       tireSize1: data.tireSize1,
       tireSize2: data.tireSize2,
+      remarks: data.remarks,
       createdBy: auth.userId,
       updatedBy: auth.userId,
     },
   });
   announce(auth.workspaceId, vehicle.contactId);
   return shape(vehicle);
+}
+
+// Edit a vehicle's details; the contact and workspace stay the same
+export async function updateVehicle(auth: AuthPayload, id: string, rawInput: unknown) {
+  await getPermissions(auth);
+  const data = parse(updateSchema, rawInput);
+  const vehicle = await prisma.vehicle.findFirst({ where: { id, workspaceId: auth.workspaceId, deletedAt: null } });
+  if (!vehicle) throw notFound('Vehicle');
+  const { registrationDate, lastServiceDate, ...rest } = data;
+  const updated = await prisma.vehicle.update({
+    where: { id: vehicle.id },
+    data: {
+      ...rest,
+      ...(registrationDate !== undefined ? { registrationDate: toDay(registrationDate) } : {}),
+      ...(lastServiceDate !== undefined ? { lastServiceDate: toDay(lastServiceDate) } : {}),
+      updatedBy: auth.userId,
+    },
+  });
+  announce(auth.workspaceId, updated.contactId);
+  return shape(updated);
 }
 
 // Soft delete
