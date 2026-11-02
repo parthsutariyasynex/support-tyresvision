@@ -124,6 +124,9 @@ import {
   messageActions,
 } from './messages';
 import { ForwardDialog } from './ForwardDialog';
+import { CountryFlag } from './CountryFlag';
+import { CarIcon, VehiclesDialog } from './VehiclesDialog';
+import { VEHICLES_EVENT } from '@/lib/vehicles';
 
 // How long a reply may take to be answered (the server gives Meta 30 s) before it's shown as not confirmed
 const SEND_TIMEOUT_MS = 60_000;
@@ -1100,6 +1103,8 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     });
     socket.on('contact:remarks', (e: { contactId: string }) => window.dispatchEvent(new CustomEvent(CONTACT_REMARKS_EVENT, { detail: e })));
     socket.on('contact:lists', (e: { contactId: string }) => window.dispatchEvent(new CustomEvent(CONTACT_LISTS_EVENT, { detail: e })));
+    // A vehicle added or deleted (by anyone): open vehicle lists of that contact reload
+    socket.on('contact:vehicles', (e: { contactId: string }) => window.dispatchEvent(new CustomEvent(VEHICLES_EVENT, { detail: e })));
     socket.on('contactList:saved', (l: { id: string }) => window.dispatchEvent(new CustomEvent(CONTACT_LIST_SAVED_EVENT, { detail: l })));
     socket.on('contactList:deleted', (l: { id: string }) => window.dispatchEvent(new CustomEvent(CONTACT_LIST_DELETED_EVENT, { detail: l })));
     // Pinned/unpinned in another of your tabs; "Mark as unread" by anyone; read (0) by anyone, in any tab
@@ -1804,7 +1809,11 @@ function ConversationList({
                       isSelected ? 'bg-primary-subtle' : 'hover:bg-surface-muted'
                     }`}
                   >
-                    <ContactAvatar contact={c.contact} />
+                    {/* The country of the customer's number under their picture */}
+                    <span className="flex shrink-0 flex-col items-center gap-1">
+                      <ContactAvatar contact={c.contact} />
+                      <CountryFlag waId={c.contact.waId} className="text-[15px]" />
+                    </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between">
                         {/* The name; the pin for a chat pinned for the team sits after the date, on the right */}
@@ -2018,6 +2027,8 @@ function ChatPanel({
   assignees: Assignee[];
 }) {
   const presence = usePresence(); // online / away / offline dots next to assignees
+  // The car button: "Add vehicle" for this chat's customer
+  const [vehiclesOpen, setVehiclesOpen] = useState(false);
   const [text, setText] = useState('');
   // Emoji picker and image sending
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -2829,6 +2840,7 @@ function ChatPanel({
               >
                 {contactName}
               </button>
+              <CountryFlag waId={conversation.contact.waId} />
               {/* {isClosed && (
                 <span className="shrink-0 rounded-full border border-line bg-surface-strong px-2 py-px text-[10px] font-semibold text-muted">
                   Closed
@@ -2889,6 +2901,24 @@ function ChatPanel({
             <TagIcon className="h-3 w-3" />
             <span>{conversation.labels.length > 0 ? `Labels (${conversation.labels.length})` : 'Label'}</span>
           </button>
+          <button
+            type="button"
+            title="Add vehicle"
+            aria-label="Add vehicle"
+            aria-haspopup="dialog"
+            onClick={() => setVehiclesOpen(true)}
+            className={`flex h-8 w-8 items-center justify-center rounded-full border transition ${vehiclesOpen ? 'border-primary text-primary' : 'border-line text-body-soft hover:bg-surface-strong hover:text-body'}`}
+          >
+            <CarIcon className="w-[1.625rem]" />
+          </button>
+          {vehiclesOpen && (
+            <VehiclesDialog
+              formOnly
+              key={conversation.contact.id}
+              customer={{ id: conversation.contact.id, name: conversation.contact.name, waId: conversation.contact.waId }}
+              onClose={() => setVehiclesOpen(false)}
+            />
+          )}
           <button
             type="button"
             title={profileOpen ? 'Hide contact profile' : 'Contact profile'}
