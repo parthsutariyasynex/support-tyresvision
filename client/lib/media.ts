@@ -121,25 +121,6 @@ export async function downloadFile(messageId: string, name: string) {
   a.remove();
 }
 
-// Puts a photo message on the clipboard as an image (not its "[image]" text), so ⌘V / Ctrl+V pastes the picture.
-// Browsers only accept PNG on the clipboard, so a JPEG is redrawn as PNG first.
-export async function copyImage(messageId: string) {
-  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) throw new Error("This browser can't copy images");
-  const toPng = async () => {
-    const blob = await (await fetch(await mediaUrl(messageId))).blob();
-    if (blob.type === 'image/png') return blob;
-    const bmp = await createImageBitmap(blob);
-    const canvas = document.createElement('canvas');
-    canvas.width = bmp.width;
-    canvas.height = bmp.height;
-    canvas.getContext('2d')!.drawImage(bmp, 0, 0);
-    bmp.close();
-    return new Promise<Blob>((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error("Couldn't copy the image"))), 'image/png'));
-  };
-  // The promise form keeps Safari's "user gesture" alive while the file loads
-  await navigator.clipboard.write([new ClipboardItem({ 'image/png': toPng() })]);
-}
-
 // "[image]", "[video]"…: the text WhatsApp media arrives with when there's no caption (not shown under the file)
 export const isMediaPlaceholder = (body: string) => /^\[(image|video|audio|document|sticker)\]$/.test(body.trim());
 
@@ -175,29 +156,68 @@ export function quotePreview(q: { type: string; body: string; deleted?: boolean;
 
 // A pasted screenshot comes as "image.png" (or with no name): give it a readable one, like the system's own
 // screenshots ("Screenshot 2026-10-21 at 14.30.05.png"). A copied file keeps its name.
-// A pasted image over the 5 MB limit (a copied photo arrives as PNG, often 3–5× its JPEG size) is re-saved as JPEG
-// so it can still be sent; anything else is returned as is
-export async function fitPastedImage(file: File): Promise<File> {
-  if (!IMAGE_TYPES.includes(file.type) || file.size <= IMAGE_MAX_BYTES) return file;
-  const bmp = await createImageBitmap(file);
-  const canvas = document.createElement('canvas');
-  canvas.width = bmp.width;
-  canvas.height = bmp.height;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#fff'; // JPEG has no transparency
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(bmp, 0, 0);
-  bmp.close();
-  for (const quality of [0.9, 0.8, 0.7, 0.6]) {
-    const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, 'image/jpeg', quality));
-    if (blob && blob.size <= IMAGE_MAX_BYTES) return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: file.lastModified });
-  }
-  return file; // still too big: the usual size message explains
-}
-
 export function pastedName(file: File, now = new Date()) {
   if (file.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(file.name)) return file;
   const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
   const stamp = `${dayKey(now)} at ${clockKey(now).replaceAll(':', '.')}`; // Dubai time
   return new File([file], `Screenshot ${stamp}.${ext}`, { type: file.type, lastModified: file.lastModified });
+}
+
+// Copy on a photo or sticker puts the picture itself on the clipboard, like WhatsApp Web (pasting it into a chat
+// attaches it). Browsers only take PNG there, so a JPEG or WebP is redrawn as PNG first. A caption goes along as text.
+export async function copyImage(messageId: string, caption = '') {
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write)
+    throw new Error("This browser can't copy images. Right-click the photo → Copy image instead.");
+  // The item is made at once (still inside the click: Safari needs that) with the PNG still being prepared
+  const png = mediaUrl(messageId)
+    .then((url) => fetch(url))
+    .then((r) => r.blob())
+    .then((b) => (b.type === 'image/png' ? b : toBlob(b, 'image/png')));
+  const items: Record<string, Promise<Blob>> = { 'image/png': png };
+  if (caption.trim() && !isMediaPlaceholder(caption)) items['text/plain'] = Promise.resolve(new Blob([caption.trim()], { type: 'text/plain' }));
+  try {
+    await navigator.clipboard.write([new ClipboardItem(items)]);
+  } catch (err) {
+    const name = (err as Error)?.name;
+    if (name === 'NotAllowedError') throw new Error('The browser blocked the clipboard. Allow clipboard access for this site and try again.');
+    if (name === 'NotSupportedError' || name === 'DataError') throw new Error("This browser can't copy images. Right-click the photo → Copy image instead.");
+    await png; // a download problem says what went wrong ("File not available"…)
+    throw new Error("Couldn't copy the image");
+  }
+}
+
+// A pasted image over WhatsApp's 5 MB (a large PNG screenshot, a photo copied from another app) is redrawn as a JPEG,
+// smaller each try, until it fits. Anything else (or one that already fits) is left as it is.
+export async function fitPastedImage(file: File): Promise<File> {
+  if (!file.type.startsWith('image/') || file.size <= IMAGE_MAX_BYTES) return file;
+  const name = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+  for (const [scale, quality] of [[1, 0.9], [1, 0.8], [0.8, 0.8], [0.6, 0.75], [0.45, 0.7], [0.3, 0.7]]) {
+    const blob = await toBlob(file, 'image/jpeg', quality, scale);
+    if (blob.size <= IMAGE_MAX_BYTES) return new File([blob], name, { type: 'image/jpeg', lastModified: file.lastModified });
+  }
+  throw new Error(`That image is ${formatSize(file.size)} and couldn't be made smaller than 5 MB.`);
+}
+
+// Redraws an image in another format (and size): JPEG gets a white background, as it has no transparency
+async function toBlob(src: Blob, type: string, quality?: number, scale = 1): Promise<Blob> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(src);
+  } catch {
+    throw new Error("Couldn't read that image");
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error("Couldn't read that image");
+  if (type === 'image/jpeg') {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const out = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+  if (!out) throw new Error("Couldn't read that image");
+  return out;
 }

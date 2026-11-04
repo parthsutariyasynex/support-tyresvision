@@ -10,9 +10,11 @@ import { APP_TIME_ZONE } from '@/lib/time';
 import { showToast } from '@/lib/toasts';
 import { AppShell, type Me } from '../../AppShell';
 import { SettingsShell } from '../SettingsShell';
+import { WhatsAppConnectForm } from './WhatsAppConnectForm';
 
 // Settings → Company details (owners and admins): the company name, its business hours (the working hours Simple
-// automations use, the same ones as on that page) and, on the other tab, the WhatsApp connection (read-only)
+// automations use, the same ones as on that page) and, on the other tab, the WhatsApp connection: the connected
+// number, and connecting or updating it (WhatsAppConnectForm)
 export default function CompanyPage() {
   return (
     <AppShell>
@@ -235,6 +237,7 @@ function Company({ me }: { me: Me }) {
             </dl>
           </section>
         )}
+        {tab === 'whatsapp' && <WhatsAppConnectForm />}
         {error && <p className="mt-4 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p>}
       </div>
 
