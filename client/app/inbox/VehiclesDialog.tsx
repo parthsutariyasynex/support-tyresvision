@@ -3,8 +3,23 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { showToast } from '@/lib/toasts';
-import { type Vehicle, type VehicleCustomer, VEHICLES_EVENT, addVehicle, deleteVehicle, listVehicles, updateVehicle, vehicleTitle } from '@/lib/vehicles';
+import {
+  type CatalogOption,
+  type Vehicle,
+  type VehicleCustomer,
+  VEHICLES_EVENT,
+  addVehicle,
+  deleteVehicle,
+  listVehicles,
+  updateVehicle,
+  vehicleCatalogEnabled,
+  vehicleMakes,
+  vehicleModels,
+  vehicleTitle,
+  vehicleYears,
+} from '@/lib/vehicles';
 import { CountryFlag } from './CountryFlag';
+import { VehicleSelect, type VehicleSelectOption } from './VehicleSelect';
 
 // The TyresCart car (sized by width only; the height follows its 2.8:1 ratio)
 export const CarIcon = ({
@@ -123,7 +138,7 @@ export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustome
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 [scrollbar-gutter:stable]">
           {/* Saved vehicles */}
           <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Saved vehicles{vehicles ? ` (${count})` : ''}</h3>
           {listError && <p className="mt-2 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{listError}</p>}
@@ -307,6 +322,82 @@ function validate(f: Form): Partial<Record<Field, string>> {
   return errors;
 }
 
+// Every year the form accepts, newest first: the Year list when the model isn't in the catalog (or it has no years)
+function allYears() {
+  const max = new Date().getFullYear() + 1;
+  return Array.from({ length: max - 1899 }, (_, i) => String(max - i));
+}
+
+type Loaded<T> = { key: string; data: T | null; error: string };
+const findByName = (list: CatalogOption[] | null, name: string) => (name.trim() ? list?.find((o) => o.name.toLowerCase() === name.trim().toLowerCase()) : undefined);
+const toOptions = (list: CatalogOption[]): VehicleSelectOption[] => list.map((o) => ({ value: o.name, label: o.name, logo: o.logo }));
+
+// Make → Model → Year lists for the chosen make and model (names, as saved; the catalog's slugs chain the requests).
+// No catalog on the server: the lists are empty and values are typed in ("Use …").
+function useVehicleCatalog(make: string, model: string) {
+  const [makes, setMakes] = useState<Loaded<CatalogOption[]>>({ key: '', data: null, error: '' });
+  const [models, setModels] = useState<Loaded<CatalogOption[]>>({ key: '', data: null, error: '' });
+  const [years, setYears] = useState<Loaded<number[]>>({ key: '', data: null, error: '' });
+
+  useEffect(() => {
+    let live = true;
+    vehicleCatalogEnabled()
+      .then((on) => {
+        if (!live) return;
+        if (!on) return setMakes({ key: 'makes', data: [], error: 'Vehicle list is not set up on the server (WHEEL_API_KEY).' });
+        vehicleMakes()
+          .then((data) => live && setMakes({ key: 'makes', data, error: '' }))
+          .catch((e) => live && setMakes({ key: 'makes', data: [], error: (e as Error).message }));
+      })
+      .catch((e) => live && setMakes({ key: 'makes', data: [], error: (e as Error).message }));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const makeSlug = findByName(makes.data, make)?.slug ?? '';
+  useEffect(() => {
+    if (!makeSlug) return;
+    let live = true;
+    setModels({ key: makeSlug, data: null, error: '' });
+    vehicleModels(makeSlug)
+      .then((data) => live && setModels({ key: makeSlug, data, error: '' }))
+      .catch((e) => live && setModels({ key: makeSlug, data: [], error: (e as Error).message }));
+    return () => {
+      live = false;
+    };
+  }, [makeSlug]);
+
+  const modelList = makeSlug && models.key === makeSlug ? models.data : null;
+  const modelSlug = findByName(modelList, model)?.slug ?? '';
+  const yearsKey = makeSlug && modelSlug ? `${makeSlug}|${modelSlug}` : '';
+  useEffect(() => {
+    if (!yearsKey) return;
+    let live = true;
+    const [m, mo] = yearsKey.split('|');
+    setYears({ key: yearsKey, data: null, error: '' });
+    vehicleYears(m, mo)
+      .then((data) => live && setYears({ key: yearsKey, data, error: '' }))
+      .catch((e) => live && setYears({ key: yearsKey, data: [], error: (e as Error).message }));
+    return () => {
+      live = false;
+    };
+  }, [yearsKey]);
+
+  const yearList = yearsKey && years.key === yearsKey ? years.data : null;
+  // The model's own years when the catalog has them; otherwise (typed model, or none listed) every year
+  const yearValues = !yearsKey ? allYears() : yearList === null ? null : yearList.length ? yearList.map(String) : allYears();
+  return {
+    makes: makes.data ? toOptions(makes.data) : null,
+    makesError: makes.error,
+    // A typed (custom) make: nothing to list, any model can be typed
+    models: !make.trim() ? [] : makeSlug ? (modelList ? toOptions(modelList) : null) : makes.data ? [] : null,
+    modelsError: makeSlug && models.key === makeSlug ? models.error : '',
+    years: yearValues ? yearValues.map((y) => ({ value: y, label: y })) : null,
+    yearsError: yearsKey && years.key === yearsKey ? years.error : '',
+  };
+}
+
 // Add (vehicle = null) or edit one. The submit button is the dialog's footer button (form="vehicle-form").
 function VehicleForm({
   contactId,
@@ -335,6 +426,10 @@ function VehicleForm({
   const errors = submitted ? validate(form) : {};
   const today = localToday();
   const set = (k: Field, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const catalog = useVehicleCatalog(form.make, form.model);
+  // A different make clears the model and year; a different model clears the year (they belonged to the old one)
+  const setMake = (v: string) => setForm((f) => (v === f.make ? f : { ...f, make: v, model: '', year: '' }));
+  const setModel = (v: string) => setForm((f) => (v === f.model ? f : { ...f, model: v, year: '' }));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -373,9 +468,10 @@ function VehicleForm({
       {required && <span className="text-danger"> *</span>}
     </label>
   );
-  const problem = (k: Field) => errors[k] && <p className="mt-1 text-[11px] text-danger">{errors[k]}</p>;
+  // Shown in the gap under the field (absolute): an error appearing never pushes the rows below down
+  const problem = (k: Field) => errors[k] && <p className="absolute inset-x-0 top-full mt-0.5 truncate text-[11px] leading-4 text-danger">{errors[k]}</p>;
   const field = (k: Exclude<Field, 'remarks'>, text: string, required: boolean, span: string, extra: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
-    <div className={span}>
+    <div className={`relative ${span}`}>
       {label(`vehicle-${k}`, text, required)}
       <input id={`vehicle-${k}`} autoComplete="off" value={form[k]} onChange={(e) => set(k, e.target.value)} aria-invalid={!!errors[k]} className={inputClass(!!errors[k])} {...extra} />
       {problem(k)}
@@ -385,12 +481,47 @@ function VehicleForm({
   return (
     <form id="vehicle-form" onSubmit={submit} noValidate autoComplete="off">
       {/* Row 1: tyre sizes · Row 2: make, model, year · Row 3: plate number, registration date — same rows on every screen size */}
-      <div className="grid grid-cols-6 gap-x-3 gap-y-4 sm:gap-x-4">
+      {/* gap-y-5: room for a field's one-line error under it */}
+      <div className="grid grid-cols-6 gap-x-3 gap-y-5 sm:gap-x-4">
         {field('tireSize1', 'Tyre Size 1', true, 'col-span-3', { maxLength: 30, placeholder: 'e.g. 265/65 R17', autoFocus: !vehicle })}
         {field('tireSize2', 'Tyre Size 2', false, 'col-span-3', { maxLength: 30, placeholder: 'Rear, if different' })}
-        {field('make', 'Make', false, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Toyota' })}
-        {field('model', 'Model', false, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Land Cruiser' })}
-        {field('year', 'Year', false, 'col-span-2', { inputMode: 'numeric', maxLength: 4, placeholder: 'e.g. 2022', onChange: (e) => set('year', e.target.value.replace(/\D/g, '').slice(0, 4)) })}
+          <>
+            <div className="col-span-2">
+              {label('vehicle-make', 'Make', false)}
+              <VehicleSelect id="vehicle-make" label="Make" value={form.make} options={catalog.makes} loadError={catalog.makesError} onChange={setMake} placeholder="Select make" withLogo />
+            </div>
+            <div className="col-span-2">
+              {label('vehicle-model', 'Model', false)}
+              <VehicleSelect
+                id="vehicle-model"
+                label="Model"
+                value={form.model}
+                options={catalog.models}
+                loadError={catalog.modelsError}
+                onChange={setModel}
+                placeholder="Select model"
+                disabled={!form.make.trim()}
+                disabledHint="Select make first"
+              />
+            </div>
+            <div className="relative col-span-2">
+              {label('vehicle-year', 'Year', false)}
+              <VehicleSelect
+                id="vehicle-year"
+                label="Year"
+                value={form.year}
+                options={catalog.years}
+                loadError={catalog.yearsError}
+                onChange={(v) => set('year', v)}
+                placeholder="Select year"
+                disabled={!form.model.trim()}
+                disabledHint="Select model first"
+                invalid={!!errors.year}
+                numeric
+              />
+              {problem('year')}
+            </div>
+          </>
         {field('plateNumber', 'Plate Number', false, 'col-span-3', { maxLength: 20, placeholder: 'e.g. A 12345', style: { textTransform: form.plateNumber ? 'uppercase' : 'none' } })}
         {field('registrationDate', 'Registration Date', false, 'col-span-3', { type: 'date', max: today })}
         <div className="col-span-6">
