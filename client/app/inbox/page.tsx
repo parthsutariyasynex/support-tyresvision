@@ -70,7 +70,7 @@ import { TemplateComposer, TemplatePicker } from './templates';
 import type { Template } from '@/lib/templates';
 import { sendVoice } from '@/lib/voice';
 import { insertAt } from '@/lib/emojis';
-import { ACCEPT, CHAT_ACCEPT, checkFile, documentLabel, filePreview, formatSize, pastedName, sendFile } from '@/lib/media';
+import { ACCEPT, CHAT_ACCEPT, checkFile, copyImage, documentLabel, filePreview, fitPastedImage, formatSize, pastedName, sendFile } from '@/lib/media';
 import { CONTACT_LIST_DELETED_EVENT, CONTACT_LIST_SAVED_EVENT } from './ListsDropdown';
 import { CUSTOM_PROPERTIES_EVENT, type ContactRemark, NOTE_FILES_MAX, type StagesChanged, addRemark, deleteContact, fetchChatNotes, stagesChanged, uploadRemarkFile } from '@/lib/contacts';
 import { PresenceDot } from '../PresenceDot';
@@ -2515,7 +2515,11 @@ function ChatPanel({
       setReplyTo(m);
       requestAnimationFrame(() => inputRef.current?.focus());
     } else if (action === 'copy') {
-      navigator.clipboard?.writeText(m.body).catch(() => setError("Couldn't copy to the clipboard"));
+      // A photo copies as the picture itself (pastes as an image, not "[image]"); anything else copies its text
+      const copied = m.type === 'image' || m.type === 'sticker'
+        ? copyImage(m.id)
+        : navigator.clipboard?.writeText(m.body);
+      copied?.catch((err) => setError(m.type === 'image' || m.type === 'sticker' ? (err as Error).message || "Couldn't copy the image" : "Couldn't copy to the clipboard"));
     } else if (action === 'pin' || action === 'unpin') {
       // For the whole team; past the admin's limit the server says so (PIN_LIMIT)
       setMessagePinned(m.id, action === 'pin')
@@ -2796,7 +2800,8 @@ function ChatPanel({
         if (!files.length) return;
         e.preventDefault();
         if (!canAttach) return setError(isClosed ? 'This chat is closed. Reopen it to send files.' : windowClosed ? '24-hour window closed: only approved templates can be sent until the customer writes again.' : 'Assign this chat to yourself before sending files (New Leads → Assign to Me).');
-        pickFile(pastedName(files[0]), files.length > 1);
+        const many = files.length > 1;
+        fitPastedImage(pastedName(files[0])).then((f) => pickFile(f, many), () => pickFile(pastedName(files[0]), many));
       }}
     >
       {dragging && (

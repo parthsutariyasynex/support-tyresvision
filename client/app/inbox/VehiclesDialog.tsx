@@ -300,11 +300,9 @@ type Field = keyof Form;
 function validate(f: Form): Partial<Record<Field, string>> {
   const errors: Partial<Record<Field, string>> = {};
   const maxYear = new Date().getFullYear() + 1;
-  if (!f.make.trim()) errors.make = 'Enter the make';
-  if (!f.model.trim()) errors.model = 'Enter the model';
-  if (!f.year.trim()) errors.year = 'Enter the year';
-  else if (!/^\d{4}$/.test(f.year.trim())) errors.year = 'Enter a 4-digit year';
-  else if (+f.year < 1900 || +f.year > maxYear) errors.year = `Enter a year from 1900 to ${maxYear}`;
+  // Make, model and year are optional; a year that's filled in must be a real one
+  if (f.year.trim() && !/^\d{4}$/.test(f.year.trim())) errors.year = 'Enter a 4-digit year';
+  else if (f.year.trim() && (+f.year < 1900 || +f.year > maxYear)) errors.year = `Enter a year from 1900 to ${maxYear}`;
   if (!f.tireSize1.trim()) errors.tireSize1 = 'Enter tyre size 1';
   return errors;
 }
@@ -324,7 +322,7 @@ function VehicleForm({
   const [form, setForm] = useState<Form>({
     make: vehicle?.make ?? '',
     model: vehicle?.model ?? '',
-    year: vehicle ? String(vehicle.year) : '',
+    year: vehicle?.year != null ? String(vehicle.year) : '',
     plateNumber: vehicle?.plateNumber ?? '',
     registrationDate: vehicle?.registrationDate ?? '',
     tireSize1: vehicle?.tireSize1 ?? '',
@@ -346,9 +344,9 @@ function VehicleForm({
     onSavingChange(true);
     setServerError('');
     const details = {
-      make: form.make.trim(),
-      model: form.model.trim(),
-      year: Number(form.year.trim()),
+      make: form.make.trim() || null,
+      model: form.model.trim() || null,
+      year: form.year.trim() ? Number(form.year.trim()) : null,
       plateNumber: form.plateNumber.trim().toUpperCase() || null,
       registrationDate: form.registrationDate || null,
       tireSize1: form.tireSize1.trim(),
@@ -372,31 +370,33 @@ function VehicleForm({
   const label = (id: string, text: string, required: boolean) => (
     <label htmlFor={id} className="mb-1.5 block truncate text-[11px] font-semibold text-body-soft">
       {text}
-      {required ? <span className="text-danger"> *</span> : <span className="font-normal text-faint"> (optional)</span>}
+      {required && <span className="text-danger"> *</span>}
     </label>
   );
   const problem = (k: Field) => errors[k] && <p className="mt-1 text-[11px] text-danger">{errors[k]}</p>;
   const field = (k: Exclude<Field, 'remarks'>, text: string, required: boolean, span: string, extra: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <div className={span}>
       {label(`vehicle-${k}`, text, required)}
-      <input id={`vehicle-${k}`} value={form[k]} onChange={(e) => set(k, e.target.value)} aria-invalid={!!errors[k]} className={inputClass(!!errors[k])} {...extra} />
+      <input id={`vehicle-${k}`} autoComplete="off" value={form[k]} onChange={(e) => set(k, e.target.value)} aria-invalid={!!errors[k]} className={inputClass(!!errors[k])} {...extra} />
       {problem(k)}
     </div>
   );
 
   return (
-    <form id="vehicle-form" onSubmit={submit} noValidate>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
-        {field('make', 'Make', true, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Toyota', autoFocus: !vehicle })}
-        {field('model', 'Model', true, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Land Cruiser' })}
-        {field('year', 'Year', true, 'col-span-1', { inputMode: 'numeric', maxLength: 4, placeholder: 'e.g. 2022', onChange: (e) => set('year', e.target.value.replace(/\D/g, '').slice(0, 4)) })}
-        {field('plateNumber', 'Plate Number', false, 'col-span-1', { maxLength: 20, placeholder: 'e.g. A 12345', style: { textTransform: form.plateNumber ? 'uppercase' : 'none' } })}
-        {field('registrationDate', 'Registration Date', false, 'col-span-2', { type: 'date', max: today })}
-        {field('tireSize1', 'Tyre Size 1', true, 'col-span-2', { maxLength: 30, placeholder: 'e.g. 265/65 R17' })}
-        {field('tireSize2', 'Tyre Size 2', false, 'col-span-2', { maxLength: 30, placeholder: 'Rear, if different' })}
-        <div className="col-span-2 sm:col-span-4">
+    <form id="vehicle-form" onSubmit={submit} noValidate autoComplete="off">
+      {/* Row 1: tyre sizes · Row 2: make, model, year · Row 3: plate number, registration date — same rows on every screen size */}
+      <div className="grid grid-cols-6 gap-x-3 gap-y-4 sm:gap-x-4">
+        {field('tireSize1', 'Tyre Size 1', true, 'col-span-3', { maxLength: 30, placeholder: 'e.g. 265/65 R17', autoFocus: !vehicle })}
+        {field('tireSize2', 'Tyre Size 2', false, 'col-span-3', { maxLength: 30, placeholder: 'Rear, if different' })}
+        {field('make', 'Make', false, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Toyota' })}
+        {field('model', 'Model', false, 'col-span-2', { maxLength: 60, placeholder: 'e.g. Land Cruiser' })}
+        {field('year', 'Year', false, 'col-span-2', { inputMode: 'numeric', maxLength: 4, placeholder: 'e.g. 2022', onChange: (e) => set('year', e.target.value.replace(/\D/g, '').slice(0, 4)) })}
+        {field('plateNumber', 'Plate Number', false, 'col-span-3', { maxLength: 20, placeholder: 'e.g. A 12345', style: { textTransform: form.plateNumber ? 'uppercase' : 'none' } })}
+        {field('registrationDate', 'Registration Date', false, 'col-span-3', { type: 'date', max: today })}
+        <div className="col-span-6">
           {label('vehicle-remarks', 'Remarks', false)}
           <textarea
+            autoComplete="off"
             id="vehicle-remarks"
             value={form.remarks}
             onChange={(e) => set('remarks', e.target.value)}

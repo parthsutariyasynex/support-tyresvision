@@ -8,9 +8,9 @@ export const typeDefs = /* GraphQL */ `
     contactId: ID!
     "Uppercase, e.g. DUBAI A 12345"
     plateNumber: String
-    make: String!
-    model: String!
-    year: Int!
+    make: String
+    model: String
+    year: Int
     "yyyy-mm-dd"
     registrationDate: String
     "yyyy-mm-dd: last tyre purchase or service"
@@ -33,9 +33,9 @@ export const typeDefs = /* GraphQL */ `
   input VehicleInput {
     contactId: ID!
     plateNumber: String
-    make: String!
-    model: String!
-    year: Int!
+    make: String
+    model: String
+    year: Int
     "yyyy-mm-dd, not in the future"
     registrationDate: String
     "yyyy-mm-dd, not in the future"

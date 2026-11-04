@@ -5,9 +5,9 @@ export type Vehicle = {
   id: string;
   contactId: string;
   plateNumber: string | null;
-  make: string;
-  model: string;
-  year: number;
+  make: string | null;
+  model: string | null;
+  year: number | null;
   registrationDate: string | null;
   lastServiceDate: string | null;
   tireSize1: string;
@@ -49,5 +49,5 @@ export async function deleteVehicle(id: string) {
   await gql(`mutation DeleteVehicle($id: ID!) { deleteVehicle(id: $id) }`, { id });
 }
 
-// "Toyota Land Cruiser 2022"
-export const vehicleTitle = (v: Pick<Vehicle, 'make' | 'model' | 'year'>) => [v.make, v.model, v.year].filter(Boolean).join(' ');
+// "Toyota Land Cruiser 2022"; "Vehicle" when make, model and year are all left empty
+export const vehicleTitle = (v: Pick<Vehicle, 'make' | 'model' | 'year'>) => [v.make, v.model, v.year].filter(Boolean).join(' ') || 'Vehicle';
