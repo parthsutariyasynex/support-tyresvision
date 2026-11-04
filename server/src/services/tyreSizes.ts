@@ -8,10 +8,13 @@ import { logEvent } from './logging.js';
 
 const MAX_LENGTH = 30; // same limit as the vehicle's tyre size fields
 
-// "205/55 r16" → "205/55R16": capitals, no spaces (how sizes are saved)
-export const normalizeTyreSize = (raw: string) => raw.replace(/\s+/g, '').toUpperCase();
-// The duplicate check's key: also "31X/10.5R15" = "31X10.5R15" (flotation sizes are written both ways)
-const sizeKey = (raw: string) => normalizeTyreSize(raw).replace(/X\//, 'X');
+// "205/55 r16" → "205/55R16": capitals, no spaces (the form the format check below reads)
+const compactTyreSize = (raw: string) => raw.replace(/\s+/g, '').toUpperCase();
+// "205/55r16" → "205/55 R16": capitals, one space before the construction letter(s) (R, ZR, RF, D, B), as the
+// Tyrescart site and its CSV write them (how sizes are saved). "205/55-16" has no letter and stays as it is.
+export const normalizeTyreSize = (raw: string) => compactTyreSize(raw).replace(/(\d)(ZR|RF|R|D|B)(?=\d)/, '$1 $2');
+// The duplicate check's key: spacing ignored, and "31X/10.5R15" = "31X10.5R15" (flotation sizes are written both ways)
+const sizeKey = (raw: string) => compactTyreSize(raw).replace(/X\//, 'X');
 
 // Accepted formats (after normalizing), with an optional load index / speed rating at the end (91V, 121/118S):
 //   metric      205/55R16, 225/45ZR17, P215/65R15, LT265/75R16, 205/65R16C, 205/55-16, 245/40RF18, 7.50/80R16
@@ -25,11 +28,12 @@ const FORMATS = [
 ];
 
 export function validateTyreSize(raw: unknown): string {
-  const size = typeof raw === 'string' ? normalizeTyreSize(raw) : '';
-  if (!size) throw new AppError('Enter a tyre size', 400, 'BAD_USER_INPUT');
+  const compact = typeof raw === 'string' ? compactTyreSize(raw) : '';
+  if (!compact) throw new AppError('Enter a tyre size', 400, 'BAD_USER_INPUT');
+  if (!FORMATS.some((f) => f.test(compact)))
+    throw new AppError('That doesn’t look like a tyre size. Use a format like 205/55 R16, 195 R15C or 31X10.50 R15.', 400, 'BAD_USER_INPUT');
+  const size = normalizeTyreSize(compact);
   if (size.length > MAX_LENGTH) throw new AppError(`Keep the tyre size to ${MAX_LENGTH} characters or fewer`, 400, 'BAD_USER_INPUT');
-  if (!FORMATS.some((f) => f.test(size)))
-    throw new AppError('That doesn’t look like a tyre size. Use a format like 205/55R16, 195R15C or 31X10.50R15.', 400, 'BAD_USER_INPUT');
   return size;
 }
 

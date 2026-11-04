@@ -58,7 +58,10 @@ const vehicleName = (v: Vehicle) => (v.plateNumber ? `${vehicleTitle(v)} (${v.pl
 // "15 Mar 2024" from yyyy-mm-dd (a calendar day: no time zone shift)
 const dayLabel = (v: string) => new Date(`${v}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
-// Today in the viewer's own time zone, for the date picker's max
+// Registration date, shown as DD/MM/YY; kept and saved as yyyy-mm-dd. "2024-03-15" → "15/03/24"
+const isoToDmy = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v.slice(8, 10)}/${v.slice(5, 7)}/${v.slice(2, 4)}` : v);
+
+// Today in the viewer's own time zone (yyyy-mm-dd): a registration date can't be after it
 function localToday() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -278,7 +281,7 @@ function VehicleCard({ vehicle: v, isEditing, onEdit, onDeleted }: { vehicle: Ve
             {v.registrationDate && (
               <div className="flex gap-1.5">
                 <dt className="shrink-0 text-muted">Registered:</dt>
-                <dd className="text-body">{dayLabel(v.registrationDate)}</dd>
+                <dd className="text-body">{isoToDmy(v.registrationDate)}</dd>
               </div>
             )}
             {v.lastServiceDate && (
@@ -331,6 +334,7 @@ function validate(f: Form): Partial<Record<Field, string>> {
   if (f.year.trim() && !/^\d{4}$/.test(f.year.trim())) errors.year = 'Enter a 4-digit year';
   else if (f.year.trim() && (+f.year < 1900 || +f.year > maxYear)) errors.year = `Enter a year from 1900 to ${maxYear}`;
   if (!f.tireSize1.trim()) errors.tireSize1 = 'Select tyre size 1';
+  if (f.registrationDate && f.registrationDate > localToday()) errors.registrationDate = 'The registration date can’t be in the future';
   return errors;
 }
 
@@ -437,7 +441,6 @@ function VehicleForm({
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState('');
   const errors = submitted ? validate(form) : {};
-  const today = localToday();
   const set = (k: Field, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const catalog = useVehicleCatalog(form.make, form.model);
   // Tyre sizes (the server's list file), shared by both tyre size fields: one added in either shows in both
@@ -461,7 +464,7 @@ function VehicleForm({
     options: tyreSizes ? tyreSizes.map((s) => ({ value: s, label: s })) : null,
     loadError: tyreSizesError,
     addNewLabel: '+ Add New Tyre Size',
-    addPlaceholder: 'e.g. 205/55R16',
+    addPlaceholder: 'e.g. 205/55 R16',
     addMaxLength: 40,
     uppercase: true,
     check: (size: string) => (size.replace(/\s+/g, '').length > 30 ? 'Keep the tyre size to 30 characters or fewer' : null),
@@ -611,7 +614,31 @@ function VehicleForm({
           />
         </div>
         {field('plateNumber', 'Plate Number', false, 'col-span-3', { maxLength: 20, placeholder: 'e.g. A 12345', style: { textTransform: form.plateNumber ? 'uppercase' : 'none' } })}
-        {field('registrationDate', 'Registration Date', false, 'col-span-3', { type: 'date', max: today })}
+        {/* The browser's own date field, so a click anywhere on it opens the calendar (its picker icon is stretched
+            over the whole field). Its text would follow the computer's date format, so it's hidden and the date is
+            shown on top as DD/MM/YY. */}
+        <div className="relative col-span-3">
+          {label('vehicle-registrationDate', 'Registration Date', false)}
+          <div className="relative">
+            <input
+              id="vehicle-registrationDate"
+              type="date"
+              max={localToday()}
+              value={form.registrationDate}
+              onChange={(e) => set('registrationDate', e.target.value)}
+              aria-invalid={!!errors.registrationDate}
+              className={`${inputClass(!!errors.registrationDate)} relative cursor-pointer pr-9 text-transparent [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-auto [&::-webkit-calendar-picker-indicator]:w-auto [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-datetime-edit]:opacity-0`}
+            />
+            <span className={`pointer-events-none absolute inset-y-0 left-3 flex items-center text-[13px] ${form.registrationDate ? 'text-ink' : 'text-faint'}`}>
+              {form.registrationDate ? isoToDmy(form.registrationDate) : 'DD/MM/YY'}
+            </span>
+            <svg className="pointer-events-none absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
+            </svg>
+          </div>
+          {problem('registrationDate')}
+        </div>
         <div className="col-span-6">
           {label('vehicle-remarks', 'Remarks', false)}
           <textarea

@@ -26,6 +26,14 @@ const nextConfig: NextConfig = {
   // browser console as repeated "WebSocket connection ... failed", a new sid each retry); polling still worked
   // because XHR/fetch does follow redirects, so the app kept working in degraded, polling-only real-time mode.
   skipTrailingSlashRedirect: true,
+  // The app's pages are prerendered, so Next.js marks them s-maxage=31536000 and Cloudflare kept each one for up to a
+  // year: visitors then got the page from an old build (an old form; after the old files were gone, "This page
+  // couldn't load"), and a private page skipped the sign-in check in proxy.ts. Pages are never stored by a shared
+  // cache now; the hashed /_next/static files still are (Next.js marks those immutable itself).
+  async headers() {
+    const pages = ['/', '/login', '/register', '/forgot-password', '/reset-password', '/inbox', '/my-chats', '/leads', '/mentions', '/collaborations', '/contacts/:id', '/reports', '/teams', '/account', '/settings', '/settings/:path*'];
+    return pages.map((source) => ({ source, headers: [{ key: 'Cache-Control', value: 'private, no-cache, no-store, max-age=0, must-revalidate' }] }));
+  },
   async rewrites() {
     return [
       {

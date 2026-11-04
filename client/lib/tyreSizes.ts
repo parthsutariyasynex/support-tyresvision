@@ -7,7 +7,7 @@ export async function listTyreSizes() {
 }
 
 // Saves a new size (the server checks the format and refuses one already listed: error code DUPLICATE). Returns the
-// size as saved (capitals, no spaces) and the whole list after it.
+// size as saved (capitals, a space before the R: "175/70 R13") and the whole list after it.
 export async function addTyreSize(size: string) {
   const query = `mutation AddTyreSize($size: String!) { addTyreSize(size: $size) { size sizes } }`;
   return (await gql<{ addTyreSize: { size: string; sizes: string[] } }>(query, { size })).addTyreSize;
