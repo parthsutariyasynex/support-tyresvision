@@ -69,6 +69,7 @@ model Workspace {
   leadStages       LeadStage[]
   settings         WorkspaceSettings?
   automation       AutomationSettings?
+  aiRobot          AiRobotSettings?
   fieldChoices     ContactFieldChoice[]
   vehicles         Vehicle[]
 }
@@ -223,6 +224,18 @@ model Conversation {
   assignments      AssignmentRecord[]
   // AI Summary (services/ai.ts): one per chat, replaced in place when regenerated
   aiSummary        ConversationSummary?
+  // AI Robot (services/aiRobot.ts): automatic replies in unassigned chats.
+  //   aiRobotState: null = may wait and reply (5 min, then instant) | active = has replied, answers instantly |
+  //   stopped (a person replied, assigned, snoozed, Stop robot) | handover (the robot handed the chat to the team).
+  //   aiRobotReason: why it stopped. Closing the chat starts a new robot session (state cleared, aiRobotSessionAt =
+  //   closing time). aiRobotLastInId: the latest customer message the robot has handled (claimed with a
+  //   compare-and-set update, so the same message is never answered twice)
+  aiRobotState     String?                    @db.VarChar(12)
+  aiRobotReason    String?                    @db.VarChar(30)
+  aiRobotStateAt   DateTime?
+  aiRobotSessionAt DateTime?
+  aiRobotLastInId  String?                    @db.VarChar(191)
+  aiRobotRuns      AiRobotRun[]
 
   @@unique([workspaceId, contactId])
   @@index([workspaceId, pinnedAt])
@@ -779,4 +792,58 @@ model Vehicle {
 
   @@index([contactId, createdAt])
   @@index([workspaceId])
+}
+
+// Settings → Company settings → AI Robot (owners and admins only): automatic replies in unassigned chats. See
+// services/aiRobot.ts.
+model AiRobotSettings {
+  workspaceId      String    @id
+  enabled          Boolean   @default(false)
+  // draft: the robot writes its reply (AI Robot tab) but sends nothing | live: it sends to the customer
+  mode             String    @default("draft") @db.VarChar(10)
+  // First reply when nobody from the team has answered the customer for this long
+  firstReplyMins   Int       @default(5)
+  // Once the robot has replied: wait this long for more quick messages, then answer them together (0 = at once)
+  groupSeconds     Int       @default(8)
+  // any | in_hours | out_hours (working hours from Simple automations, in the workspace time zone)
+  hoursRule        String    @default("any") @db.VarChar(10)
+  // Robot replies per chat in 24 hours before it hands the chat over
+  maxRepliesPerDay Int       @default(20)
+  minConfidence    Float     @default(0.7)
+  webSearch        Boolean   @default(true)
+  handoverMessage  String?   @db.Text
+  // Facts about the business the robot may use (branches, hours, services, payment options, warranty)
+  companyInfo      String?   @db.Text
+  // One per line; a reply containing one is not sent
+  bannedPhrases    String?   @db.Text
+  createdAt        DateTime  @default(now())
+  createdBy        String?
+  updatedAt        DateTime  @updatedAt
+  updatedBy        String?
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// One row per AI Robot decision in a chat: what it did and why (the chat tab's history, tuning and reports). The reply
+// text is kept only for drafts (draft mode, nothing sent); a sent reply is the message itself (messageId).
+model AiRobotRun {
+  id             BigInt       @id @default(autoincrement())
+  workspaceId    String
+  conversationId String
+  // reply | draft | handover | blocked | failed
+  action         String       @db.VarChar(10)
+  reason         String?      @db.Text
+  confidence     Float?
+  draft          String?      @db.Text
+  // The tools the AI called for this decision, one per line (e.g. "search_tyres 245/40 R18: 5 of 9")
+  tools          String?      @db.Text
+  // The customer message it answered, and the message it sent (reply or handover)
+  inMessageId    String?      @db.VarChar(191)
+  messageId      String?      @db.VarChar(191)
+  model          String       @db.VarChar(100)
+  durationMs     Int
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([conversationId, createdAt])
 }
