@@ -476,7 +476,12 @@ async function buildRequest(conv: Conv, last: ChatLine, settings: RobotSettings)
   const name = conv.contact.firstName || conv.contact.name || '';
   const customer = [
     name ? `Name: ${name}` : 'Name: unknown',
-    ...vehicles.map((v) => `Vehicle: ${v.make} ${v.model} ${v.year}, tyre size ${v.tireSize1}${v.tireSize2 && v.tireSize2 !== v.tireSize1 ? ` (rear ${v.tireSize2})` : ''}`),
+    // Replaced (make, model and year are optional on a vehicle now; only what's there is shown):
+    // ...vehicles.map((v) => `Vehicle: ${v.make} ${v.model} ${v.year}, tyre size ${v.tireSize1}${v.tireSize2 && v.tireSize2 !== v.tireSize1 ? ` (rear ${v.tireSize2})` : ''}`),
+    ...vehicles.map((v) => {
+      const car = [v.make, v.model, v.year].filter((x) => x != null && String(x).trim()).join(' ');
+      return `Vehicle: ${car ? `${car}, ` : ''}tyre size ${v.tireSize1}${v.tireSize2 && v.tireSize2 !== v.tireSize1 ? ` (rear ${v.tireSize2})` : ''}`;
+    }),
   ].join('\n');
   const { lines } = await replyContext(conv.id, last);
   // The customer's messages since our side last wrote (welcome/away replies don't count)
