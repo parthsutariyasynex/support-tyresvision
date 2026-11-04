@@ -1,5 +1,6 @@
 import { addVehicle, deleteVehicle, listVehicles, searchVehicleCustomers, updateVehicle } from '../services/vehicles.js';
-import { vehicleCatalogEnabled, vehicleMakes, vehicleModels, vehicleYears } from '../services/vehicleCatalog.js';
+import { addMake, addModel, addYear, listMakes, listModels, listYears } from '../services/customVehicles.js';
+import { vehicleCatalogEnabled } from '../services/vehicleCatalog.js';
 import { authed } from './shared.js';
 
 export const typeDefs = /* GraphQL */ `
@@ -31,12 +32,26 @@ export const typeDefs = /* GraphQL */ `
     waId: String!
   }
 
-  "A make or model for the vehicle form's dropdowns (Wheel API)"
+  "A make or model for the vehicle form's dropdowns: from the Wheel API, or added with + Add New (custom)"
   type VehicleCatalogOption {
-    "Wheel API slug: pass it to vehicleModels / vehicleYears"
-    slug: String!
+    "Wheel API slug; null for an added one"
+    slug: String
     name: String!
     logo: String
+    "Added in the app (server/config/vehicle-catalog.json)"
+    custom: Boolean!
+  }
+
+  "A dropdown's options; error: the Wheel API couldn't be reached (the added ones are still listed)"
+  type VehicleCatalogList {
+    options: [VehicleCatalogOption!]!
+    error: String
+  }
+
+  "A model's years, newest first; empty when the catalog has none for it (the form then offers every year)"
+  type VehicleYearList {
+    years: [Int!]!
+    error: String
   }
 
   input VehicleInput {
@@ -74,12 +89,12 @@ export const typeDefs = /* GraphQL */ `
     vehicleCustomers(search: String): [VehicleCustomer!]!
     "Whether the Make / Model / Year lists are set up (WHEEL_API_KEY); false: the form takes typed values"
     vehicleCatalogEnabled: Boolean!
-    "Every vehicle make, A-Z"
-    vehicleMakes: [VehicleCatalogOption!]!
-    "A make's models, A-Z (make: a slug from vehicleMakes)"
-    vehicleModels(make: String!): [VehicleCatalogOption!]!
-    "A model's production years, newest first"
-    vehicleYears(make: String!, model: String!): [Int!]!
+    "Every vehicle make (Wheel API + added), A-Z"
+    vehicleMakes: VehicleCatalogList!
+    "A make's models (Wheel API + added), A-Z. make: its name"
+    vehicleModels(make: String!): VehicleCatalogList!
+    "A model's production years (Wheel API + added). make, model: their names"
+    vehicleYears(make: String!, model: String!): VehicleYearList!
   }
 
   extend type Mutation {
@@ -87,6 +102,12 @@ export const typeDefs = /* GraphQL */ `
     updateVehicle(id: ID!, input: UpdateVehicleInput!): Vehicle!
     "Soft delete"
     deleteVehicle(id: ID!): Boolean!
+    "+ Add New Make: saved to server/config/vehicle-catalog.json. Errors: BAD_USER_INPUT, DUPLICATE (already listed)"
+    addVehicleMake(name: String!): VehicleCatalogOption!
+    "+ Add New Model for a make (by name)"
+    addVehicleModel(make: String!, name: String!): VehicleCatalogOption!
+    "+ Add New Year for a make and model (by name)"
+    addVehicleYear(make: String!, model: String!, year: Int!): Int!
   }
 `;
 
@@ -95,13 +116,16 @@ export const resolvers = {
     contactVehicles: authed(({ contactId }: { contactId: string }, auth) => listVehicles(auth, contactId)),
     vehicleCustomers: authed(({ search }: { search?: string | null }, auth) => searchVehicleCustomers(auth, search)),
     vehicleCatalogEnabled: authed(async () => vehicleCatalogEnabled()),
-    vehicleMakes: authed(() => vehicleMakes()),
-    vehicleModels: authed(({ make }: { make: string }) => vehicleModels(make)),
-    vehicleYears: authed(({ make, model }: { make: string; model: string }) => vehicleYears(make, model)),
+    vehicleMakes: authed(() => listMakes()),
+    vehicleModels: authed(({ make }: { make: string }) => listModels(make)),
+    vehicleYears: authed(({ make, model }: { make: string; model: string }) => listYears(make, model)),
   },
   Mutation: {
     addVehicle: authed(({ input }: { input: unknown }, auth) => addVehicle(auth, input)),
     updateVehicle: authed(({ id, input }: { id: string; input: unknown }, auth) => updateVehicle(auth, id, input)),
     deleteVehicle: authed(({ id }: { id: string }, auth) => deleteVehicle(auth, id)),
+    addVehicleMake: authed(({ name }: { name: string }) => addMake(name)),
+    addVehicleModel: authed(({ make, name }: { make: string; name: string }) => addModel(make, name)),
+    addVehicleYear: authed(({ make, model, year }: { make: string; model: string; year: number }) => addYear(make, model, year)),
   },
 };

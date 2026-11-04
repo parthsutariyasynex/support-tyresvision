@@ -197,8 +197,15 @@ export function MessageBubble({
         {reactions.length > 0 && <ReactionBadge message={m} isOut={isOut} onRemove={onReact && m.teamReaction ? () => onReact(null) : undefined} />}
 
         {m.automation && !m.senderName && (
-          <p className="mb-0.5 pr-4 text-[11px] font-semibold text-muted" title="Sent automatically (Settings → Simple automations)">
-            {m.automation === 'follow_up' ? '🤖 Follow-up' : '🤖 Auto-reply'}
+          // Replaced (the AI Robot's replies: Settings → AI Robot):
+          // <p className="mb-0.5 pr-4 text-[11px] font-semibold text-muted" title="Sent automatically (Settings → Simple automations)">
+          //   {m.automation === 'follow_up' ? '🤖 Follow-up' : '🤖 Auto-reply'}
+          // </p>
+          <p
+            className={`mb-0.5 pr-4 text-[11px] font-semibold ${m.automation === 'ai_robot' ? 'text-[#2563eb]' : 'text-muted'}`}
+            title={m.automation === 'ai_robot' ? 'Sent by the AI Robot (Settings → AI Robot)' : 'Sent automatically (Settings → Simple automations)'}
+          >
+            {m.automation === 'ai_robot' ? '🤖 AI Robot' : m.automation === 'follow_up' ? '🤖 Follow-up' : '🤖 Auto-reply'}
           </p>
         )}
         {m.senderName && (

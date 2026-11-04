@@ -36,8 +36,36 @@ committed yet.
   Apple Maps; plus **live location** for 15 minutes, 1 hour or 8 hours.
 - **Centralized backend logging**: what happens on the server (sign-ins, refusals, WhatsApp/Meta calls, webhooks,
   message sends and deliveries, errors) is recorded in one place, so a problem can be traced afterwards.
+- **AI Robot**: automatic WhatsApp replies in unassigned chats when nobody from the team answers, with Tyrescart
+  prices and stock, order collection and handover to the team (Settings → AI Robot, owners and admins). Off until an
+  admin turns it on. Plan and decisions: `AI_ROBOT_PLAN.md`.
 
 ### Added
+- **AI Robot** (Settings → Company settings → AI Robot; owners and admins only, refused by the server for anyone else):
+  - Answers customers in **open, unassigned** chats when nobody from the team has replied for **5 minutes** (setting),
+    then answers each new customer message at once (after an 8-second pause that groups quick messages). Welcome/away
+    auto-replies don't count as an answer.
+  - Stops in a chat for good when a **team member replies**, the chat is **assigned** or **snoozed**, or someone presses
+    **Stop robot**; closing and reopening the chat starts it fresh.
+  - **Prices, stock and product links** come only from the Tyrescart catalogue (the site's GraphQL API): in stock first,
+    cheapest first, "fully fitted, VAT included", prices for 2 and 4 tyres calculated by the server. General tyre
+    questions (season, comfort, ratings) can use web search (setting). English and Arabic.
+  - **Orders**: when a customer chooses a tyre, it asks for what's missing (quantity, where to fit, preferred day and
+    time), sends a summary with the exact total and hands the chat to the team to confirm the booking and payment.
+  - **Handover** (sends the handover message once, then stays quiet; the chat shows **Needs human**): discounts,
+    payment, complaints, asking for a person, or anything it can't answer safely.
+  - **Checks before anything is sent**: prices only as the catalogue returned them, no numbers or links that aren't in
+    the chat, the company information or the catalogue, Arabic only for Arabic-speaking customers, no markdown, no
+    repeats, banned phrases, a minimum confidence and a daily limit per chat. A reply that fails a check is not sent:
+    the chat is handed over.
+  - **Draft mode** (the default): replies are written into the chat's AI Robot tab and nothing is sent; **Live** sends.
+  - Settings: on/off, mode, first-reply wait, grouping pause, when to run (always / in / outside working hours), daily
+    limit, minimum confidence, web search, about the company, handover message, banned phrases; **Test the robot**
+    shows what it would answer in a chat and what it looked up, without sending anything.
+- **AI Robot tab** in the chat footer (everyone who sees the chat, while the robot is on or has worked in the chat):
+  status with a countdown, **Stop robot**, the latest draft with **Use this reply** (sent as your message after the same
+  confirmation as AI Reply), and the history of its decisions with what it looked up.
+- Robot messages show **🤖 AI Robot** in the chat; handed-over unassigned chats show **Needs human** in the chat list.
 - **WhatsApp formatting in the chat**: messages (sent, received, history, arriving live) and internal notes show
   WhatsApp's formatting: `*bold*`, `_italic_`, `~strikethrough~`, ```` ```monospace``` ```` (may span lines),
   `` `inline code` ``, `- ` / `* ` bulleted lists, `1. ` numbered lists (numbers kept as typed), `> ` quotes, and
@@ -173,6 +201,9 @@ committed yet.
   switched to another provider in `.env` without code changes.
 
 ### Database
+- AI Robot: `server/prisma/sql/2026-11-04_ai_robot.sql` adds 5 nullable columns to `Conversation` (`aiRobotState`,
+  `aiRobotReason`, `aiRobotStateAt`, `aiRobotSessionAt`, `aiRobotLastInId`) and two new tables, `AiRobotSettings` (one
+  row per workspace) and `AiRobotRun` (the robot's decisions). Nothing existing is changed or removed; no rows are added.
 - New table `LogEntry` (no links to other tables; indexes on time, workspace + time, level + time and request id).
 - Formatting, Location and the webhook logging need no database changes: a location is a message of type `location`
   (live: `live_location`) whose text ends with a Google Maps link holding the exact coordinates.
@@ -191,6 +222,17 @@ committed yet.
   `MAP_ATTRIBUTION` (the live page's map). Client: `NEXT_PUBLIC_MAP_TILE_URL` / `NEXT_PUBLIC_MAP_ATTRIBUTION`.
 - Deploy the client too: `next.config.ts` sends `/live/*` to the API (the customer's live location page).
 - Keep the API to one process while live location is used (see Known limits).
+- **AI Robot, before starting the new server code**: run
+  `npx prisma db execute --file prisma/sql/2026-11-04_ai_robot.sql --schema prisma/schema.prisma` in `server/`, then
+  `npx prisma generate`. Until the SQL has run, the inbox fails ("column aiRobotState does not exist"). Do **not** use
+  `prisma db push` (it would drop `Workspace.companyId`).
+- AI Robot `.env` (server): `TYRESCART_GRAPHQL_URL`, `TYRESCART_GRAPHQL_USER`, `TYRESCART_GRAPHQL_PASSWORD` (the
+  **live** Tyrescart GraphQL API) and `TYRESCART_SITE_URL` (the **live** site address: product links sent to customers
+  start with it). Without them the robot never quotes prices. Optional: `AI_ROBOT_ENABLED=false` (turns it off on the
+  server), `AI_ROBOT_MODEL` (default `AI_MODEL`). It uses the existing `OPENROUTER_API_KEY`. Never set `GRAPH_API_BASE`
+  in production (local testing only).
+- After deploying, the robot is **off** in every workspace. Turn it on in **Draft** mode first (Settings → AI Robot),
+  fill in "About the company", check its drafts for a few days, then switch to Live.
 
 ---
 
