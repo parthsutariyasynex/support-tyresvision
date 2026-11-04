@@ -7,6 +7,8 @@ export type VehicleSelectOption = { value: string; label: string; logo?: string 
 // The vehicle form's Make / Model / Year dropdown: sized like the form's inputs. Opened: type to filter, ↑ ↓ Enter to
 // choose, Esc or a click outside to close. When the search matches nothing listed, "Use “…”" keeps what was typed
 // (a vehicle the list doesn't have, or the list couldn't load). options = null while loading.
+// With onAddNew (tyre sizes), there's no "Use “…”": a "+ Add New …" row pinned at the bottom hands over to the caller's
+// own add step instead (with whatever was searched), so new values are checked and saved before they can be chosen.
 export function VehicleSelect({
   id,
   label,
@@ -20,6 +22,9 @@ export function VehicleSelect({
   loadError,
   numeric,
   withLogo,
+  autoFocus,
+  addNewLabel,
+  onAddNew,
 }: {
   id: string;
   label: string;
@@ -33,6 +38,9 @@ export function VehicleSelect({
   loadError?: string;
   numeric?: boolean; // years: the search box brings up the number pad, custom values are 4 digits
   withLogo?: boolean; // options have logos (makes): reserve the logo's room while loading
+  autoFocus?: boolean;
+  addNewLabel?: string; // e.g. "+ Add New Tyre Size"
+  onAddNew?: (query: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -43,12 +51,17 @@ export function VehicleSelect({
 
   const q = query.trim().toLowerCase();
   const all = options ?? [];
-  const matches = q ? all.filter((o) => o.label.toLowerCase().includes(q)) : all;
+  // Spaces and punctuation don't matter: "205 55 16" finds 205/55R16, "landrover" finds Land Rover
+  const loose = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const lq = loose(q);
+  const matches = q ? all.filter((o) => o.label.toLowerCase().includes(q) || (!!lq && loose(o.label).includes(lq))) : all;
   // Starts-with first: typing "to" puts Toyota above Mitsubishi Outlander-style matches
   if (q) matches.sort((a, b) => Number(!a.label.toLowerCase().startsWith(q)) - Number(!b.label.toLowerCase().startsWith(q)));
   const exact = all.some((o) => o.label.toLowerCase() === q);
-  const custom = query.trim() && !exact && (!numeric || /^\d{4}$/.test(query.trim())) ? query.trim() : '';
+  const custom = !onAddNew && query.trim() && !exact && (!numeric || /^\d{4}$/.test(query.trim())) ? query.trim() : '';
   const rows: { value: string; label: string; logo?: string | null; custom?: boolean }[] = [...matches, ...(custom ? [{ value: custom, label: `Use “${custom}”`, custom: true }] : [])];
+  const addIndex = onAddNew ? rows.length : -1; // the pinned "+ Add New …" row comes after the list for ↑ ↓ and Enter
+  const last = onAddNew ? rows.length : rows.length - 1;
 
   useEffect(() => {
     if (!open) return;
@@ -68,6 +81,10 @@ export function VehicleSelect({
     button.current?.focus();
     if (v !== value) onChange(v);
   };
+  const addNew = () => {
+    setOpen(false);
+    onAddNew?.(query.trim());
+  };
   const current = all.find((o) => o.value.toLowerCase() === value.toLowerCase());
 
   return (
@@ -76,6 +93,7 @@ export function VehicleSelect({
         ref={button}
         id={id}
         type="button"
+        autoFocus={autoFocus}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
@@ -128,13 +146,14 @@ export function VehicleSelect({
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();
-                  setActive((a) => Math.min(a + 1, rows.length - 1));
+                  setActive((a) => Math.min(a + 1, last));
                 } else if (e.key === 'ArrowUp') {
                   e.preventDefault();
                   setActive((a) => Math.max(a - 1, 0));
                 } else if (e.key === 'Enter') {
                   e.preventDefault();
-                  if (rows[active]) choose(rows[active].value);
+                  if (active === addIndex) addNew();
+                  else if (rows[active]) choose(rows[active].value);
                 } else if (e.key === 'Escape') {
                   // Only this dropdown closes, not the dialog it's in
                   e.preventDefault();
@@ -150,7 +169,12 @@ export function VehicleSelect({
           </div>
           <ul ref={list} role="listbox" aria-label={label} className="max-h-60 overflow-y-auto py-1">
             {options === null && <li className="px-3 py-2.5 text-xs text-faint">Loading…</li>}
-            {loadError && <li className="px-3 py-2 text-[11px] text-danger">{loadError} You can still type a value above.</li>}
+            {loadError && (
+              <li className="px-3 py-2 text-[11px] text-danger">
+                {loadError}
+                {!onAddNew && ' You can still type a value above.'}
+              </li>
+            )}
             {rows.map((o, i) => {
               const selected = !o.custom && o.value.toLowerCase() === value.toLowerCase();
               return (
@@ -172,8 +196,19 @@ export function VehicleSelect({
                 </li>
               );
             })}
-            {options !== null && !rows.length && <li className="px-3 py-2.5 text-xs text-faint">{q ? 'No matches' : 'Nothing listed. Type to add one.'}</li>}
+            {options !== null && !rows.length && <li className="px-3 py-2.5 text-xs text-faint">{q ? 'No matches' : onAddNew ? 'Nothing listed yet' : 'Nothing listed. Type to add one.'}</li>}
           </ul>
+          {onAddNew && (
+            <button
+              type="button"
+              onMouseEnter={() => setActive(addIndex)}
+              onClick={addNew}
+              className={`flex w-full items-center gap-2 border-t border-line-soft px-3 py-2 text-left text-[13px] font-semibold text-primary ${active === addIndex ? 'bg-surface-muted' : ''}`}
+            >
+              {addNewLabel ?? '+ Add new'}
+              {query.trim() && <span className="truncate font-normal text-muted">“{query.trim()}”</span>}
+            </button>
+          )}
         </div>
       )}
     </div>
