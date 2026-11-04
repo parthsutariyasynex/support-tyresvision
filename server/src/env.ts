@@ -86,4 +86,9 @@ export const env = {
   // the attribution shown and allows light use only)
   mapTileUrl: process.env.MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   mapAttribution: process.env.MAP_ATTRIBUTION || '© OpenStreetMap contributors',
+  // Make / Model / Year dropdowns on the vehicle form (services/vehicleCatalog.ts): the Wheel API key and the domain it
+  // was issued for (sent as X-Client-Domain). Without a key the form falls back to typing make/model/year. Secret.
+  wheelApiUrl: (process.env.WHEEL_API_URL || 'https://wheel-api.klever.ae').replace(/\/$/, ''),
+  wheelApiKey: process.env.WHEEL_API_KEY || process.env.KLEVER_API_KEY || '',
+  wheelApiDomain: process.env.WHEEL_API_DOMAIN || '',
 };

@@ -323,6 +323,7 @@ export function AppShell({
   useEffect(() => {
     if (!getToken()) {
       cachedMe = null;
+      setToken(null); // also drops the server-side sign-in cookie, or /login would send this browser straight back
       router.replace('/login');
       return;
     }
@@ -352,6 +353,7 @@ export function AppShell({
           try {
             sessionStorage.removeItem(ME_STORAGE_KEY);
           } catch {}
+          setToken(null); // signed out for real: without this, /login would send a still-valid cookie back here (a loop)
           router.replace('/login');
         });
     load();

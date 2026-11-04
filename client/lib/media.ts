@@ -121,6 +121,25 @@ export async function downloadFile(messageId: string, name: string) {
   a.remove();
 }
 
+// Puts a photo message on the clipboard as an image (not its "[image]" text), so ⌘V / Ctrl+V pastes the picture.
+// Browsers only accept PNG on the clipboard, so a JPEG is redrawn as PNG first.
+export async function copyImage(messageId: string) {
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) throw new Error("This browser can't copy images");
+  const toPng = async () => {
+    const blob = await (await fetch(await mediaUrl(messageId))).blob();
+    if (blob.type === 'image/png') return blob;
+    const bmp = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bmp.width;
+    canvas.height = bmp.height;
+    canvas.getContext('2d')!.drawImage(bmp, 0, 0);
+    bmp.close();
+    return new Promise<Blob>((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error("Couldn't copy the image"))), 'image/png'));
+  };
+  // The promise form keeps Safari's "user gesture" alive while the file loads
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': toPng() })]);
+}
+
 // "[image]", "[video]"…: the text WhatsApp media arrives with when there's no caption (not shown under the file)
 export const isMediaPlaceholder = (body: string) => /^\[(image|video|audio|document|sticker)\]$/.test(body.trim());
 
@@ -156,6 +175,26 @@ export function quotePreview(q: { type: string; body: string; deleted?: boolean;
 
 // A pasted screenshot comes as "image.png" (or with no name): give it a readable one, like the system's own
 // screenshots ("Screenshot 2026-10-21 at 14.30.05.png"). A copied file keeps its name.
+// A pasted image over the 5 MB limit (a copied photo arrives as PNG, often 3–5× its JPEG size) is re-saved as JPEG
+// so it can still be sent; anything else is returned as is
+export async function fitPastedImage(file: File): Promise<File> {
+  if (!IMAGE_TYPES.includes(file.type) || file.size <= IMAGE_MAX_BYTES) return file;
+  const bmp = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width;
+  canvas.height = bmp.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#fff'; // JPEG has no transparency
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0);
+  bmp.close();
+  for (const quality of [0.9, 0.8, 0.7, 0.6]) {
+    const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, 'image/jpeg', quality));
+    if (blob && blob.size <= IMAGE_MAX_BYTES) return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: file.lastModified });
+  }
+  return file; // still too big: the usual size message explains
+}
+
 export function pastedName(file: File, now = new Date()) {
   if (file.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(file.name)) return file;
   const ext = (file.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg');
