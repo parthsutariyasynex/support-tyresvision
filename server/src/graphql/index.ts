@@ -16,6 +16,7 @@ import * as quickReplies from './quickReplies.js';
 import * as permissions from './permissions.js';
 import * as presence from './presence.js';
 import * as ai from './ai.js';
+import * as aiRobot from './aiRobot.js';
 import * as push from './push.js';
 import * as reports from './reports.js';
 import * as settings from './settings.js';
@@ -26,7 +27,7 @@ import type { Context } from './shared.js';
 
 type ServerContext = { req: Request; res: Response };
 
-const modules = [shared, auth, settings, inbox, labels, assign, permissions, activity, members, quickReplies, reports, presence, contacts, automations, location, push, ai, vehicles, tyreSizes];
+const modules = [shared, auth, settings, inbox, labels, assign, permissions, activity, members, quickReplies, reports, presence, contacts, automations, location, push, ai, aiRobot, vehicles, tyreSizes];
 
 export const yoga = createYoga<ServerContext, Context>({
   schema: createSchema<ServerContext & Context>({
