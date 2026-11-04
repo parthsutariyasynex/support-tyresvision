@@ -60,11 +60,14 @@ function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Each customer's last loaded list, so opening the dialog again shows it at once (then refreshes it)
+const vehicleListCache = new Map<string, Vehicle[]>();
+
 // The customer's vehicles: who (name, WhatsApp number) at the top, every saved vehicle with Edit and Delete, and the
 // form below to add another one (or edit the chosen one). The customer always comes from the open chat; nobody types
 // it in. Reloads live when anyone adds, edits or deletes one of this customer's vehicles.
 export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustomer; onClose: () => void }) {
-  const [vehicles, setVehicles] = useState<Vehicle[] | null>(null);
+  const [vehicles, setVehicles] = useState<Vehicle[] | null>(() => vehicleListCache.get(customer.id) ?? null);
   const [listError, setListError] = useState('');
   const [editing, setEditing] = useState<Vehicle | null>(null);
   const [formRound, setFormRound] = useState(0); // a new number = an empty form again
@@ -76,6 +79,7 @@ export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustome
     () =>
       listVehicles(customer.id)
         .then((v) => {
+          vehicleListCache.set(customer.id, v);
           setVehicles(v);
           setListError('');
         })
@@ -106,6 +110,7 @@ export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustome
   };
 
   const count = vehicles?.length ?? 0;
+  const listReady = vehicles !== null || !!listError;
   const name = customer.name?.trim() || `+${customer.waId}`;
   if (typeof document === 'undefined') return null;
   return createPortal(
@@ -168,7 +173,9 @@ export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustome
             </ul>
           )}
 
-          {/* Add another vehicle, or edit the chosen one */}
+          {/* Add another vehicle, or edit the chosen one. Shown once the list above has loaded (or failed to), so
+              the list arriving never pushes the form down while someone is typing in it. */}
+          {listReady && (
           <section ref={formRef} className="mt-5 scroll-mt-4 border-t border-line-soft pt-4">
             <div className="mb-3 flex h-6 items-center justify-between gap-2">
               <h3 className="flex min-w-0 items-center text-[11px] font-semibold uppercase tracking-wide text-muted">
@@ -202,6 +209,7 @@ export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustome
               }}
             />
           </section>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line-soft px-5 py-3">
@@ -214,7 +222,7 @@ export function VehiclesDialog({ customer, onClose }: { customer: VehicleCustome
               Close
             </button>
           )}
-          <button type="submit" form="vehicle-form" disabled={saving} className="min-w-32 rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-50">
+          <button type="submit" form="vehicle-form" disabled={saving || !listReady} className="min-w-32 rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-50">
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Add vehicle'}
           </button>
         </div>
