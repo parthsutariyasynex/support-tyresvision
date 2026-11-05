@@ -65,6 +65,46 @@ export async function downloadAssignmentReportCsv(range: ReportRange = {}) {
   return name;
 }
 
+// Conversation Reports: new customers in a range (contacts whose first chat started then) and their outcome now
+export type ConversationOutcome = 'new' | 'won' | 'lost';
+export type ConversationReportCustomer = {
+  id: string;
+  name: string | null;
+  waId: string;
+  email: string | null;
+  createdAt: string;
+  outcome: ConversationOutcome;
+  // The customer's lifecycle stage now (its value); null = none
+  stage: string | null;
+  stageLabel: string | null;
+  stageColor: string | null;
+};
+export type ConversationReport = {
+  totalNew: number;
+  totalWon: number;
+  totalLost: number;
+  totalOpen: number;
+  truncated: boolean;
+  colors: { new: string; won: string; lost: string };
+  labels: { won: string; lost: string };
+  // Every lifecycle stage in Settings order, with how many of these customers are on it now
+  stages: { value: string; label: string; color: string; lost: boolean; isDefault: boolean; count: number }[];
+  customers: ConversationReportCustomer[];
+};
+
+export async function fetchConversationReport(range: { from: string; to: string }) {
+  const query = `query ConversationReport($from: DateTime!, $to: DateTime!) {
+    conversationReport(from: $from, to: $to) {
+      totalNew totalWon totalLost totalOpen truncated
+      colors { new won lost }
+      labels { won lost }
+      stages { value label color lost isDefault count }
+      customers { id name waId email createdAt outcome stage stageLabel stageColor }
+    }
+  }`;
+  return (await gql<{ conversationReport: ConversationReport }>(query, range)).conversationReport;
+}
+
 // Dubai calendar day (yyyy-mm-dd) -> ISO bounds for the server (start of day / end of day in Dubai time)
 export function dayStartIso(day: string) {
   return day ? zonedInstant(day, '00:00:00.000').toISOString() : null;

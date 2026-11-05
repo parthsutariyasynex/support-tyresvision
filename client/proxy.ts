@@ -74,6 +74,7 @@ export const config = {
     '/collaborations',
     '/contacts/:id',
     '/reports',
+    '/conversation-reports',
     '/teams',
     '/account',
     '/settings',
