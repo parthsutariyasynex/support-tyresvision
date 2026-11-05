@@ -930,7 +930,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     loadFeed();
     loadUnreadTotal();
     loadUnassignedCount();
-    const socket = io(API_URL, { auth: { token: getToken() } });
+    const socket = io(API_URL, { auth: { token: getToken() }, addTrailingSlash: false });
     socketRef.current = socket;
     const unbindPresence = bindPresence(socket); // online / away / offline dots
     // The open chat on screen is being read: its customer messages are read now (badge 0 here, and on the server before
@@ -2265,7 +2265,7 @@ function ChatPanel({
   const [noteFiles, setNoteFiles] = useState<File[]>([]);
   const noteFileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => setNoteFiles([]), [conversation.id]);
-  function addNoteFiles(list: FileList | null) {
+  function addNoteFiles(list: FileList | File[] | null) {
     const chosen = Array.from(list ?? []);
     const problems = chosen.map((f) => ('problem' in checkFile(f) ? `${f.name}: ${(checkFile(f) as { problem: string }).problem}` : null)).filter(Boolean);
     const ok = chosen.filter((f) => !('problem' in checkFile(f)));
@@ -2538,11 +2538,10 @@ function ChatPanel({
       setReplyTo(m);
       requestAnimationFrame(() => inputRef.current?.focus());
     } else if (action === 'copy') {
-      // A photo copies as the picture itself (pastes as an image, not "[image]"); anything else copies its text
-      const copied = m.type === 'image' || m.type === 'sticker'
-        ? copyImage(m.id)
-        : navigator.clipboard?.writeText(m.body);
-      copied?.catch((err) => setError(m.type === 'image' || m.type === 'sticker' ? (err as Error).message || "Couldn't copy the image" : "Couldn't copy to the clipboard"));
+      // A photo or sticker copies the picture itself (pasting it in a chat attaches it); anything else its text
+      if ((m.type === 'image' || m.type === 'sticker') && m.mediaMime) copyImage(m.id, m.body).catch((err) => setError((err as Error).message));
+      else if (!navigator.clipboard?.writeText) setError("This browser doesn't allow copying here. Select the text and press Ctrl+C instead.");
+      else navigator.clipboard.writeText(m.body).catch(() => setError("Couldn't copy to the clipboard"));
     } else if (action === 'pin' || action === 'unpin') {
       // For the whole team; past the admin's limit the server says so (PIN_LIMIT)
       setMessagePinned(m.id, action === 'pin')
@@ -2822,9 +2821,16 @@ function ChatPanel({
         const files = [...e.clipboardData.items].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter((f): f is File => !!f);
         if (!files.length) return;
         e.preventDefault();
+        // Writing a note: the image is attached to the note (only the team sees it), not sent to the customer
+        if (noting)
+          return void Promise.all(files.map((f) => fitPastedImage(pastedName(f))))
+            .then(addNoteFiles)
+            .catch((err) => setError((err as Error).message));
         if (!canAttach) return setError(isClosed ? 'This chat is closed. Reopen it to send files.' : windowClosed ? '24-hour window closed: only approved templates can be sent until the customer writes again.' : 'Assign this chat to yourself before sending files (New Leads → Assign to Me).');
-        const many = files.length > 1;
-        fitPastedImage(pastedName(files[0])).then((f) => pickFile(f, many), () => pickFile(pastedName(files[0]), many));
+        // An image over 5 MB is made smaller first (as a JPEG), so it can still be sent
+        fitPastedImage(pastedName(files[0]))
+          .then((f) => pickFile(f, files.length > 1))
+          .catch((err) => setError((err as Error).message));
       }}
     >
       {dragging && (

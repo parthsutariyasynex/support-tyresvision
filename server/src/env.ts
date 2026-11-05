@@ -93,4 +93,11 @@ export const env = {
   wheelApiUrl: (process.env.WHEEL_API_URL || 'https://wheel-api.klever.ae').replace(/\/$/, ''),
   wheelApiKey: process.env.WHEEL_API_KEY || process.env.KLEVER_API_KEY || '',
   wheelApiDomain: process.env.WHEEL_API_DOMAIN || '',
+  // The vehicle form's Tyre Size list (services/tyreSizes.ts): a JSON file, the only place sizes are kept. Sizes added
+  // in the app are written to it. Default: config/tyre-sizes.json next to the server; set a path outside the repo in
+  // production so deploys don't overwrite added sizes (copy the default file there first).
+  tyreSizesFile: process.env.TYRE_SIZES_FILE || 'config/tyre-sizes.json',
+  // Makes, models and years added on the vehicle form (+ Add New …), shown with the Wheel API's (services/
+  // customVehicles.ts): a JSON file, like the tyre sizes. Same advice for production: a path outside the repo.
+  vehicleCatalogFile: process.env.VEHICLE_CATALOG_FILE || 'config/vehicle-catalog.json',
 };
