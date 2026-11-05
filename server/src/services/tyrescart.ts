@@ -43,6 +43,7 @@ async function query<T>(text: string): Promise<T> {
   else {
     if (!env.tyrescartGraphqlUrl) throw new CatalogueError('The Tyrescart catalogue is not set up on this server (TYRESCART_GRAPHQL_URL)');
     const auth: Record<string, string> = env.tyrescartGraphqlUser ? { Authorization: `Basic ${Buffer.from(`${env.tyrescartGraphqlUser}:${env.tyrescartGraphqlPassword}`).toString('base64')}` } : {};
+    if (env.tyrescartKleverApiKey) auth['X-Klever-Api-Key'] = env.tyrescartKleverApiKey;
     let res: Response;
     try {
       res = await fetch(env.tyrescartGraphqlUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth }, body: JSON.stringify({ query: text }), signal: AbortSignal.timeout(TIMEOUT_MS) });

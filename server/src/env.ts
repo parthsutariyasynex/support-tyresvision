@@ -40,6 +40,8 @@ export const env = {
   tyrescartGraphqlUrl: process.env.TYRESCART_GRAPHQL_URL || '',
   tyrescartGraphqlUser: process.env.TYRESCART_GRAPHQL_USER || '',
   tyrescartGraphqlPassword: process.env.TYRESCART_GRAPHQL_PASSWORD || '',
+  // The live site's vehicle fitment queries (kleverVehicle*) need this key, sent as the X-Klever-Api-Key header
+  tyrescartKleverApiKey: process.env.TYRESCART_KLEVER_API_KEY || '',
   tyrescartSiteUrl: (process.env.TYRESCART_SITE_URL || '').replace(/\/$/, ''),
   // Meta app id: only needed to create templates with an image/video/document header (Meta wants a sample file,
   // uploaded through the app's Resumable Upload API). Optional.

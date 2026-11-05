@@ -94,7 +94,8 @@ function readTab(): Tab {
   if (lastTab) return lastTab;
   try {
     const t = localStorage.getItem(TAB_KEY);
-    lastTab = t === 'objects' || t === 'orders' || t === 'files' ? t : 'profile';
+    // Only a tab that is shown (a remembered hidden tab, e.g. Orders, falls back to Profile)
+    lastTab = TABS.find((x) => x.key === t)?.key ?? 'profile';
   } catch {
     lastTab = 'profile';
   }
@@ -124,8 +125,9 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
 };
 const TABS: { key: Tab; label: string }[] = [
   { key: 'profile', label: 'Profile' },
-  { key: 'objects', label: 'Custom objects' },
-  { key: 'orders', label: 'Orders' },
+  // Hidden for now: Custom objects and Orders (Stripe payment status). Uncomment to show them again.
+  // { key: 'objects', label: 'Custom objects' },
+  // { key: 'orders', label: 'Orders' },
   { key: 'files', label: 'Attachments' },
 ];
 

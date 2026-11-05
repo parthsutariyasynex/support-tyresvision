@@ -94,7 +94,7 @@ export function AuthShell({
       </section>
 
       {/* Right Column: Hero Visual Showcase (WhatsApp Forest/Teal Gradient) */}
-      <aside className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-linear-to-br from-primary-hover via-primary to-primary-dark p-12 xl:p-16 text-on-primary">
+      <aside className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-linear-to-br from-primary via-primary-dark to-primary-darkest p-12 xl:p-16 text-on-primary">
         {/* Decorative Background Elements */}
         <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-accent/15 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -left-32 h-[500px] w-[500px] rounded-full border-[60px] border-on-primary/[0.04]" />

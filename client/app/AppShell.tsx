@@ -452,7 +452,7 @@ export function AppShell({
                 <p className="px-2 pb-1.5 text-[10px] font-bold tracking-wider text-faint uppercase">
                   CONVERSATIONS
                 </p>
-                {menuQuery.trim() && !['Inbox', 'New Leads', 'My Chats', 'Collaborations', 'Mentions', ...(isAdminRole(me.role) ? ['Teams', 'Reports'] : [])].some(showItem) && (
+                {menuQuery.trim() && !['Inbox', 'New Leads', 'My Chats', 'Collaborations', 'Mentions', ...(isAdminRole(me.role) ? ['Teams', 'Reports', 'Conversation Reports'] : [])].some(showItem) && (
                   <p className="px-2.5 py-2 text-[11px] text-faint">No menu item matches “{menuQuery.trim()}”</p>
                 )}
                 <div className="space-y-0.5">
@@ -583,6 +583,27 @@ export function AppShell({
                         <path d="M7 15l4-4 4 4 5-6" />
                       </svg>
                       <span>Reports</span>
+                    </Link>
+                  )}
+
+                  {/* Conversation Reports: new customers in a date range, won and lost. Owners and admins only */}
+                  {isAdminRole(me.role) && showItem('Conversation Reports') && (
+                    <Link
+                      href="/conversation-reports"
+                      scroll={false}
+                      className={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold transition ${
+                        pathname === '/conversation-reports'
+                          ? 'bg-secondary text-on-primary shadow-2xs'
+                          : 'text-body hover:bg-surface-strong'
+                      }`}
+                    >
+                      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 3v18h18" />
+                        <rect x="7" y="11" width="3" height="6" />
+                        <rect x="12" y="7" width="3" height="10" />
+                        <rect x="17" y="13" width="3" height="4" />
+                      </svg>
+                      <span>Conversation Reports</span>
                     </Link>
                   )}
 
@@ -881,6 +902,25 @@ export function AppShell({
                     </svg>
                   </Link>
                 )}
+                {isAdminRole(me.role) && (
+                  <Link
+                    href="/conversation-reports"
+                    scroll={false}
+                    title="Conversation Reports"
+                    className={`flex h-9 w-9 items-center justify-center rounded-xl transition ${
+                      pathname === '/conversation-reports'
+                        ? 'bg-secondary text-on-primary shadow-2xs'
+                        : 'text-faint hover:bg-surface-strong hover:text-body'
+                    }`}
+                  >
+                    <svg className="h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 3v18h18" />
+                      <rect x="7" y="11" width="3" height="6" />
+                      <rect x="12" y="7" width="3" height="10" />
+                      <rect x="17" y="13" width="3" height="4" />
+                    </svg>
+                  </Link>
+                )}
 
                 {/* Future Slim Icons (Hidden for now)
                 <button
@@ -954,7 +994,7 @@ export function AppShell({
 
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold tracking-tight text-ink">{pathname.startsWith('/contacts/') ? 'View contact details' : pathname.startsWith('/settings') ? 'Settings' : pathname === '/account' ? 'My account' : pathname === '/teams' ? 'Teams' : pathname === '/reports' ? 'Reports' : pathname === '/my-chats' ? 'My Chats' : pathname === '/collaborations' ? 'Collaborations' : pathname === '/mentions' ? 'Mentions' : pathname === '/leads' ? 'New Leads' : 'Inbox'}</h1>
+                <h1 className="text-base font-bold tracking-tight text-ink">{pathname.startsWith('/contacts/') ? 'View contact details' : pathname.startsWith('/settings') ? 'Settings' : pathname === '/account' ? 'My account' : pathname === '/teams' ? 'Teams' : pathname === '/reports' ? 'Reports' : pathname === '/conversation-reports' ? 'Conversation Reports' : pathname === '/my-chats' ? 'My Chats' : pathname === '/collaborations' ? 'Collaborations' : pathname === '/mentions' ? 'Mentions' : pathname === '/leads' ? 'New Leads' : 'Inbox'}</h1>
                 {isConnected ? (
                   <span className="inline-flex shrink-0 items-center whitespace-nowrap gap-1 rounded-full border border-primary-soft-border bg-primary-soft px-2.5 py-0.5 text-[11px] font-semibold text-primary">
                     <span className="h-1.5 w-1.5 rounded-full bg-accent" />
@@ -980,6 +1020,8 @@ export function AppShell({
                   ? 'Everyone in this workspace: name, email, role and status'
                   : pathname === '/reports'
                   ? 'Assignment report: who assigned which chat to whom, and why'
+                  : pathname === '/conversation-reports'
+                  ? 'New customers in the chosen dates, and how many were won or lost'
                   : pathname === '/my-chats'
                   ? 'Chats assigned to you or that you collaborate on'
                   : pathname === '/collaborations'
