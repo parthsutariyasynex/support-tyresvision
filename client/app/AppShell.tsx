@@ -156,7 +156,7 @@ export function AppShell({
   };
   useEffect(() => {
     if (!me?.user.id) return;
-    const socket = io(API_URL, { auth: { token: getToken() } });
+    const socket = io(API_URL, { auth: { token: getToken() }, addTrailingSlash: false });
     const unbind = bindPresence(socket);
     const open = (id: string) => openChatRef.current(id);
     // The notification sound, unless turned off in Settings → Notifications
