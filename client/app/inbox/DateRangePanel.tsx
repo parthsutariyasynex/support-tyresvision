@@ -8,14 +8,17 @@ const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 // "Date range" in the Filter menu: presets on the left, a month calendar on the right, Clear / Apply filter below.
 // Nothing changes the list until Apply filter.
+// Also "Created date" (the same panel, its own title).
 export function DateRangePanel({
   from,
   to,
   onApply,
+  title = 'Date range',
 }: {
   from: string;
   to: string;
   onApply: (range: { from: string; to: string }) => void;
+  title?: string;
 }) {
   const today = todayYmd(); // in Dubai
   const [draft, setDraft] = useState({ from, to });
@@ -50,7 +53,7 @@ export function DateRangePanel({
     <div className="ml-1 w-[34rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-line bg-surface shadow-xl">
       <div className="flex">
         <div className="w-40 shrink-0 border-r border-line-soft p-2">
-          <p className="px-2.5 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-faint">Date range</p>
+          <p className="px-2.5 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-faint">{title}</p>
           <ul>
             {PRESETS.map((p) => (
               <li key={p.key}>

@@ -164,8 +164,9 @@ export function pastedName(file: File, now = new Date()) {
 }
 
 // Copy on a photo or sticker puts the picture itself on the clipboard, like WhatsApp Web (pasting it into a chat
-// attaches it). Browsers only take PNG there, so a JPEG or WebP is redrawn as PNG first. A caption goes along as text.
-export async function copyImage(messageId: string, caption = '') {
+// attaches it). Browsers only take PNG there, so a JPEG or WebP is redrawn as PNG first. Only the picture: with the
+// caption alongside as text, most apps (Word, Slack, Teams, Gmail, chat boxes) paste the text and drop the image.
+export async function copyImage(messageId: string) {
   if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write)
     throw new Error("This browser can't copy images. Right-click the photo → Copy image instead.");
   // The item is made at once (still inside the click: Safari needs that) with the PNG still being prepared
@@ -173,10 +174,8 @@ export async function copyImage(messageId: string, caption = '') {
     .then((url) => fetch(url))
     .then((r) => r.blob())
     .then((b) => (b.type === 'image/png' ? b : toBlob(b, 'image/png')));
-  const items: Record<string, Promise<Blob>> = { 'image/png': png };
-  if (caption.trim() && !isMediaPlaceholder(caption)) items['text/plain'] = Promise.resolve(new Blob([caption.trim()], { type: 'text/plain' }));
   try {
-    await navigator.clipboard.write([new ClipboardItem(items)]);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
   } catch (err) {
     const name = (err as Error)?.name;
     if (name === 'NotAllowedError') throw new Error('The browser blocked the clipboard. Allow clipboard access for this site and try again.');

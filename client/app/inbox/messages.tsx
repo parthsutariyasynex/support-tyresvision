@@ -254,7 +254,7 @@ export function MessageBubble({
           )}
           {m.type !== 'location' && m.type !== 'live_location' && (m.mediaMime ? m.body && !isMediaPlaceholder(m.body) : true) && (
           // WhatsApp formatting shown (bold, italic, lists…); links open in a new tab, search matches stay marked
-          <FormattedText text={m.body} highlightTerm={highlightTerm} className="pr-3 text-[13px] leading-relaxed" />
+          <FormattedText text={m.body} highlightTerm={highlightTerm} spaced={m.automation === 'ai_robot'} className="pr-3 text-[13px] leading-relaxed" />
           )}
           </>
         )}

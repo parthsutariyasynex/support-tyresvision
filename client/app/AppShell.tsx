@@ -409,7 +409,13 @@ export function AppShell({
   const workspaceInitial = (me.workspace.name || 'W').charAt(0).toUpperCase();
 
   return (
-    <div suppressHydrationWarning className="flex h-screen w-full overflow-hidden bg-shell font-sans antialiased text-ink-soft">
+    // The flag font (app/FlagEmojis.tsx) first, then the same system font as before (font-sans): it covers only flag
+    // characters, so the country flags (chat list, chat header, contact panel) draw as flags on Windows, not "AE"
+    <div
+      suppressHydrationWarning
+      className="flex h-screen w-full overflow-hidden bg-shell antialiased text-ink-soft"
+      style={{ fontFamily: '"Twemoji Country Flags", var(--font-sans)' }}
+    >
       {/* 1. Expandable / Collapsible Left Sidebar (not on Settings, which is a full page with its own menu) */}
       {!fullPage && (
       <aside

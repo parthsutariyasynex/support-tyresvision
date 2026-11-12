@@ -46,11 +46,27 @@ const conversationPageSchema = pageSchema.extend({
   assigneeIds: z.array(z.string().min(1).max(64)).max(100).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
+  // "Filter by" menu → Created date: when the chat was created (its first message), not its last activity
+  createdFrom: z.coerce.date().optional(),
+  createdTo: z.coerce.date().optional(),
+  // The chat list's tabs: Unread (what shows bold) or Unreplied (the customer's message is the latest one)
+  view: z.enum(['unread', 'unreplied']).optional(),
 });
 
+// Unreplied: chats whose latest message is the customer's (not deleted), i.e. nobody has answered yet. "Latest" can't
+// be expressed in a Prisma filter, so the ids come from one query (Message has an index on conversationId, createdAt).
+async function unrepliedConversationIds(workspaceId: string) {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT c.id FROM Conversation c
+    JOIN Message m ON m.id = (SELECT m2.id FROM Message m2 WHERE m2.conversationId = c.id ORDER BY m2.createdAt DESC, m2.id DESC LIMIT 1)
+    WHERE c.workspaceId = ${workspaceId} AND m.direction = 'in' AND m.deletedAt IS NULL`;
+  return rows.map((r) => r.id);
+}
+
 // Free-text search over a workspace's chats, one box for everything (case-insensitive, substring):
-//   customer name · phone number (digits, so "+971 50" finds 97150…) · any message text (deleted ones excluded)
-//   · label name · assignee name · the words open / closed / unread / assigned / unassigned (chat status)
+//   customer name · phone number (digits, so "+971 50" finds 97150…) · label name · assignee name · the words
+//   open / closed / unread / assigned / unassigned (chat status). Message text is searched separately, in the
+//   search's "Messages" section (searchMessages), like WhatsApp.
 export function conversationSearchWhere(raw: string): Prisma.ConversationWhereInput {
   const term = raw.trim();
   if (!term) return {};
@@ -59,7 +75,8 @@ export function conversationSearchWhere(raw: string): Prisma.ConversationWhereIn
   const or: Prisma.ConversationWhereInput[] = [
     { contact: { name: { contains: term } } },
     ...(digits.length >= 3 ? [{ contact: { waId: { contains: digits } } }] : []),
-    { messages: { some: { body: { contains: term }, deletedAt: null } } },
+    // Replaced (message text is searched in the search's own "Messages" section, searchMessages, like WhatsApp):
+    // { messages: { some: { body: { contains: term }, deletedAt: null } } },
     { labels: { some: { label: { name: { contains: term } } } } },
     { assignedTo: { user: { name: { contains: term } } } },
   ];
@@ -108,8 +125,44 @@ export async function listConversations(workspaceId: string, page?: unknown, vie
   };
   if (page === undefined) return prisma.conversation.findMany(query);
 
-  const { first, after, labelId, assignee, status, search, sort, labelIds, assigneeIds, from, to, leadStage, leadStages, countries } = parse(conversationPageSchema, page);
+  const filters = parse(conversationPageSchema, page);
+  const { first, after, sort } = filters;
+  const dir = sort === 'oldest' ? ('asc' as const) : ('desc' as const);
+  if (after) await requireConversation(workspaceId, after);
+  // Replaced (pins are for the whole team now, conversationPins.ts):
+  // // The viewer's pinned chats come first on the first page (whatever their age), and are left out of the pages
+  // const pins = viewerId
+  //   ? (await prisma.conversationPin.findMany({ where: { userId: viewerId, conversation: { workspaceId } }, orderBy: { createdAt: 'desc' }, select: { conversationId: true } })).map((p) => p.conversationId)
+  //   : [];
+  // The team's pinned chats come first on the first page for everyone (whatever their age, most recently pinned first),
+  // and are left out of the pages
+  const pins = (await prisma.conversation.findMany({ where: { workspaceId, pinnedAt: { not: null } }, orderBy: { pinnedAt: 'desc' }, select: { id: true } })).map((p) => p.id);
+  const where = await conversationListWhere(workspaceId, filters, viewerId);
+  const rows = await prisma.conversation.findMany({
+    ...query,
+    orderBy: [{ lastMessageAt: dir }, { id: dir }],
+    where: pins.length ? { AND: [where, { id: { notIn: pins } }] } : where,
+    take: first + 1,
+    ...(after ? { cursor: { id: after }, skip: 1 } : {}),
+  });
+  // The chat list footer ("Total Contacts: N"): every chat these filters match (one chat per contact), pinned ones
+  // included. Counted once, with the first page; later pages leave it null.
+  const totalCount = after ? null : await prisma.conversation.count({ where });
+  const page_ = { ...toPage(rows, first), totalCount };
+  if (after || !pins.length) return page_;
+  const pinned = await prisma.conversation.findMany({ ...query, where: { AND: [where, { id: { in: pins } }] } });
+  pinned.sort((a, b) => pins.indexOf(a.id) - pins.indexOf(b.id));
+  return { ...page_, nodes: [...pinned, ...page_.nodes] };
+}
+
+type ConversationFilters = z.infer<typeof conversationPageSchema>;
+
+// Which chats the list shows for these filters (left menu view, status, tabs, "Filter by", search), for this viewer.
+// Shared by the chat list and the search's "Messages" section (searchMessages), so both cover the same chats.
+async function conversationListWhere(workspaceId: string, filters: ConversationFilters, viewerId?: string): Promise<Prisma.ConversationWhereInput> {
+  const { labelId, assignee, status, search, labelIds, assigneeIds, from, to, createdFrom, createdTo, leadStage, leadStages, countries, view } = filters;
   if (from && to && from > to) throw new AppError('"from" must be before "to"', 400, 'BAD_USER_INPUT');
+  if (createdFrom && createdTo && createdFrom > createdTo) throw new AppError('"createdFrom" must be before "createdTo"', 400, 'BAD_USER_INPUT');
   const memberIds = (assigneeIds ?? []).filter((a) => a !== 'unassigned');
   const menuFilters: Prisma.ConversationWhereInput[] = [
     ...(labelIds?.length ? [{ labels: { some: { labelId: { in: labelIds } } } }] : []),
@@ -122,21 +175,17 @@ export async function listConversations(workspaceId: string, page?: unknown, vie
       ? [{ OR: [...(memberIds.length ? [{ assignedToId: { in: memberIds } }] : []), ...(assigneeIds.includes('unassigned') ? [{ assignedToId: null }] : [])] }]
       : []),
     ...(from || to ? [{ lastMessageAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }] : []),
+    ...(createdFrom || createdTo ? [{ createdAt: { ...(createdFrom ? { gte: createdFrom } : {}), ...(createdTo ? { lte: createdTo } : {}) } }] : []),
+    // Tabs. Unread = what shows bold: unread customer messages, or assigned to the viewer, open and not opened yet
+    ...(view === 'unread'
+      ? [{ OR: [{ unread: { gt: 0 } }, ...(viewerId ? [{ status: 'open', assignedTo: { userId: viewerId }, assigneeOpenedAt: null }] : [])] }]
+      : []),
+    ...(view === 'unreplied' ? [{ id: { in: await unrepliedConversationIds(workspaceId) } }] : []),
   ];
-  const dir = sort === 'oldest' ? ('asc' as const) : ('desc' as const);
-  if (after) await requireConversation(workspaceId, after);
   if ((assignee === 'me' || assignee === 'collaborating' || assignee === 'mentioned') && !viewerId) throw new AppError('Sign in to see chats assigned to you', 401, 'UNAUTHENTICATED');
-  // Replaced (pins are for the whole team now, conversationPins.ts):
-  // // The viewer's pinned chats come first on the first page (whatever their age), and are left out of the pages
-  // const pins = viewerId
-  //   ? (await prisma.conversationPin.findMany({ where: { userId: viewerId, conversation: { workspaceId } }, orderBy: { createdAt: 'desc' }, select: { conversationId: true } })).map((p) => p.conversationId)
-  //   : [];
-  // The team's pinned chats come first on the first page for everyone (whatever their age, most recently pinned first),
-  // and are left out of the pages
-  const pins = (await prisma.conversation.findMany({ where: { workspaceId, pinnedAt: { not: null } }, orderBy: { pinnedAt: 'desc' }, select: { id: true } })).map((p) => p.id);
   // Chats the viewer deleted for themselves ("Delete chat"), until a newer message brings them back
   const deleted = viewerId ? await deletedConversationIds(viewerId, workspaceId) : [];
-  const where: Prisma.ConversationWhereInput = {
+  return {
       workspaceId,
       ...(deleted.length ? { id: { notIn: deleted } } : {}),
       contact: { deletedAt: null, ...(leadStage ? { leadStage } : {}) },
@@ -159,18 +208,41 @@ export async function listConversations(workspaceId: string, page?: unknown, vie
       ...(search ? conversationSearchWhere(search) : {}),
       ...(menuFilters.length ? { AND: menuFilters } : {}),
   };
-  const rows = await prisma.conversation.findMany({
-    ...query,
-    orderBy: [{ lastMessageAt: dir }, { id: dir }],
-    where: pins.length ? { AND: [where, { id: { notIn: pins } }] } : where,
+}
+
+// --- Search → "Messages" (like WhatsApp): every message containing all the typed words (any order, any case), in the
+// chats the list's current view, tabs and filters cover; newest first, a page at a time.
+
+// The typed words (at most 10; repeated spaces ignored)
+export const searchWords = (text: string) => [...new Set(text.trim().split(/\s+/).filter(Boolean))].slice(0, 10);
+
+const messageSearchSchema = conversationPageSchema.extend({ text: z.string().trim().min(1, 'Type something to search').max(200) });
+
+export async function searchMessages(workspaceId: string, input: unknown, viewerId?: string) {
+  const { text, first, after, ...filters } = parse(messageSearchSchema, input);
+  const words = searchWords(text);
+  // The chats: the list's own rules for this viewer, without its search (the words are looked for in the messages)
+  const conversation = await conversationListWhere(workspaceId, { ...filters, first, search: undefined }, viewerId);
+  const where: Prisma.MessageWhereInput = { conversation, deletedAt: null, AND: words.map((w) => ({ body: { contains: w } })) };
+  if (after && !(await prisma.message.findFirst({ where: { id: after, conversation: { workspaceId } }, select: { id: true } }))) throw notFound('Message');
+  const rows = await prisma.message.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: first + 1,
     ...(after ? { cursor: { id: after }, skip: 1 } : {}),
+    include: { conversation: { select: { id: true, contact: { select: { name: true, waId: true } } } } },
   });
-  const page_ = toPage(rows, first);
-  if (after || !pins.length) return page_;
-  const pinned = await prisma.conversation.findMany({ ...query, where: { AND: [where, { id: { in: pins } }] } });
-  pinned.sort((a, b) => pins.indexOf(a.id) - pins.indexOf(b.id));
-  return { ...page_, nodes: [...pinned, ...page_.nodes] };
+  // Messages from before the viewer's "Clear chat" stay hidden from them, here as in the chat itself
+  const clears = viewerId
+    ? new Map((await prisma.conversationClear.findMany({ where: { userId: viewerId, conversationId: { in: [...new Set(rows.map((r) => r.conversationId))] } }, select: { conversationId: true, clearedAt: true } })).map((c) => [c.conversationId, c.clearedAt]))
+    : new Map<string, Date>();
+  const page = toPage(rows, first);
+  const nodes = page.nodes.filter((m) => {
+    const cleared = clears.get(m.conversationId);
+    return !cleared || m.createdAt > cleared;
+  });
+  const totalCount = after ? null : await prisma.message.count({ where });
+  return { ...page, nodes, totalCount, words };
 }
 
 // Every lookup is scoped to the caller's workspace, so other workspaces' data reads as "not found"

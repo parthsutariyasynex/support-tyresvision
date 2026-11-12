@@ -13,6 +13,7 @@ import {
   type Conversation,
   type ConversationStatus,
   type Message,
+  type MessageHit,
   deleteMessage,
   editMessage,
   reactToMessage,
@@ -24,6 +25,7 @@ import {
   fetchMessages,
   markConversationRead,
   matchesSearch,
+  searchMessages,
   needsAttention,
   newerMessage,
   clearConversation,
@@ -51,7 +53,7 @@ import { type Assignee, type WorkspaceMember, claimConversation, fetchAssignees,
 import { teamPhotoChanged } from '@/lib/teamPhotos';
 import { type Label, type Permissions, fetchLabels, fetchPermissions } from '@/lib/labels';
 import { EMPTY_MENU_FILTERS, type MenuFilters, matchesMenuFilters, toServerFilter } from '@/lib/chatFilters';
-import { findMessageMatches } from '@/lib/messageSearch';
+import { findMessageMatches, highlightWords, searchSnippet } from '@/lib/messageSearch';
 import { bindPresence, presenceOf, usePresence } from '@/lib/presence';
 import { revalidateOnReturn } from '@/lib/revalidate';
 import { createOpenChatReloader, mergeReloadedMessages } from '@/lib/chatReload';
@@ -132,6 +134,9 @@ import { VEHICLES_EVENT } from '@/lib/vehicles';
 
 // How long a reply may take to be answered (the server gives Meta 30 s) before it's shown as not confirmed
 const SEND_TIMEOUT_MS = 60_000;
+// Clicking a quoted (or pinned) message that isn't loaded loads earlier messages until it is: at most this many
+// pages (PAGE_SIZE each, 1,000 messages)
+const JUMP_MAX_PAGES = 20;
 
 // The Location screen (📎 → Location): its map library loads only when it's opened
 const LocationDialog = dynamic(() => import('./LocationDialog').then((m) => m.LocationDialog), { ssr: false });
@@ -150,7 +155,7 @@ export default function InboxPage() {
   return <AppShell>{(me) => <Inbox meName={me.user.name} channelPhone={me.workspace.whatsapp?.displayPhone ?? null} defaultCountry={me.workspace.settings?.defaultCountry ?? ''} />}</AppShell>;
 }
 
-type ConversationFilter = { labelId: string | null; assignee: string | null; search: string | null; sort: SortOrder; status: 'open' | 'snoozed' | 'closed' | null; leadStage: string | null } & ReturnType<typeof toServerFilter>;
+type ConversationFilter = { labelId: string | null; assignee: string | null; search: string | null; sort: SortOrder; status: 'open' | 'snoozed' | 'closed' | null; leadStage: string | null; view: 'unread' | 'unreplied' | null } & ReturnType<typeof toServerFilter>;
 const filterKey = (f: ConversationFilter) => JSON.stringify(f);
 type SortOrder = 'newest' | 'oldest';
 type StatusChange = Pick<Conversation, 'status' | 'closedAt' | 'closedById'> & { conversationId: string; snoozedUntil?: string | null };
@@ -326,6 +331,15 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     }
     return null;
   });
+  // The same cursor for code that loads several pages in a row (loadOlderMessages), always the latest. Synced while
+  // rendering (only when the state changes, so loadOlderMessages' own update isn't undone): the chat panel's effects
+  // run before this component's, and one of them (opening a search result) may load older pages at once.
+  const olderCursorRef = useRef(olderCursor);
+  const olderCursorSeenRef = useRef(olderCursor);
+  if (olderCursorSeenRef.current !== olderCursor) {
+    olderCursorSeenRef.current = olderCursor;
+    olderCursorRef.current = olderCursor;
+  }
 
   const [conversationsCursor, setConversationsCursor] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -414,7 +428,11 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
   const searchParams = useSearchParams();
   const stageFilter = searchParams.get('stage') || null;
   const menuFilterKey = JSON.stringify(menuFilters);
-  const currentFilter = (): ConversationFilter => ({ labelId: labelFilter, assignee: assigneeFilter, search: searchTerm || null, sort: sortOrder, status: statusFilter === 'all' ? null : statusFilter, leadStage: stageFilter, ...toServerFilter(menuFilters) });
+  // The Unread / Unreplied tab, applied by the server too (so paging and the "Total Contacts" footer follow it)
+  const tabView = filterType === 'unread' || filterType === 'unreplied' ? filterType : null;
+  const currentFilter = (): ConversationFilter => ({ labelId: labelFilter, assignee: assigneeFilter, search: searchTerm || null, sort: sortOrder, status: statusFilter === 'all' ? null : statusFilter, leadStage: stageFilter, view: tabView, ...toServerFilter(menuFilters) });
+  // List footer: how many chats (one per contact) the current filters match on the server, not just those loaded
+  const [matchCount, setMatchCount] = useState<number | null>(null);
   const filterRef = useRef<ConversationFilter>(currentFilter());
   filterRef.current = currentFilter();
   const lastActiveRef = useRef<Conversation | null>(null);
@@ -449,6 +467,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
         if (seq !== loadSeqRef.current) return;
         setConversationsError(null);
         setServerSearchedTerm(filter.search ?? '');
+        if (page.totalCount !== null && page.totalCount !== undefined) setMatchCount(page.totalCount);
         // A search result replaces the list outright (never merged with chats loaded earlier that no longer match)
         if (!loadedMoreRef.current || filter.search) {
           updateConversations(page.nodes);
@@ -750,7 +769,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     loadedMoreRef.current = false;
     setConversationsCursor(null);
     loadConversations();
-  }, [labelFilter, assigneeFilter, searchTerm, sortOrder, menuFilterKey, statusFilter, stageFilter, loadConversations]);
+  }, [labelFilter, assigneeFilter, searchTerm, sortOrder, menuFilterKey, statusFilter, stageFilter, tabView, loadConversations]);
 
   // AppShell's top header leaves a slot for page controls. Look it up once this page is in the DOM (per path), and
   // if the header isn't rendered yet (first sign-in, before "me" loads) wait for it to appear.
@@ -850,6 +869,58 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     },
     [pathname],
   );
+
+  // Search → "Messages" section (like WhatsApp): messages with all the typed words, in the chats the list's own view,
+  // tab and filters cover. Follows the same debounced term as the chat search.
+  const [hits, setHits] = useState<{ term: string; items: MessageHit[]; cursor: string | null; total: number | null; words: string[]; error: string | null } | null>(null);
+  const [hitsLoading, setHitsLoading] = useState(false);
+  const hitsSeqRef = useRef(0);
+  const hitsFilterKey = JSON.stringify({ ...filterRef.current, search: null, sort: null });
+  useEffect(() => {
+    const term = searchTerm.trim();
+    const seq = ++hitsSeqRef.current;
+    if (!term) {
+      setHits(null);
+      setHitsLoading(false);
+      return;
+    }
+    const { search: _search, sort: _sort, ...filter } = filterRef.current;
+    setHitsLoading(true);
+    searchMessages(term, filter)
+      .then((page) => {
+        if (seq === hitsSeqRef.current)
+          setHits({ term, items: page.nodes, cursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null, total: page.totalCount, words: page.words, error: null });
+      })
+      .catch((err) => {
+        if (seq === hitsSeqRef.current) setHits({ term, items: [], cursor: null, total: null, words: [], error: (err as Error).message || "Couldn't search messages" });
+      })
+      .finally(() => {
+        if (seq === hitsSeqRef.current) setHitsLoading(false);
+      });
+  }, [searchTerm, hitsFilterKey]);
+
+  const loadMoreHits = useCallback(async () => {
+    if (!hits?.cursor) return;
+    const seq = hitsSeqRef.current;
+    const { search: _search, sort: _sort, ...filter } = filterRef.current;
+    setHitsLoading(true);
+    try {
+      const page = await searchMessages(hits.term, filter, hits.cursor);
+      if (seq !== hitsSeqRef.current) return;
+      setHits((h) => h && { ...h, items: [...h.items, ...page.nodes.filter((n) => !h.items.some((x) => x.message.id === n.message.id))], cursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null });
+    } catch {
+      // the button stays, to try again
+    } finally {
+      if (seq === hitsSeqRef.current) setHitsLoading(false);
+    }
+  }, [hits]);
+
+  // A found message was clicked: open its chat (even one the chat list doesn't show) and go to that message there
+  const [focusMessage, setFocusMessage] = useState<{ conversationId: string; messageId: string; nonce: number } | null>(null);
+  const openHit = (hit: MessageHit) => {
+    setFocusMessage({ conversationId: hit.conversationId, messageId: hit.message.id, nonce: Date.now() });
+    openConversation(hit.conversationId);
+  };
 
   // A toast was clicked (AppShell): open that chat here
   useEffect(() => {
@@ -1227,11 +1298,16 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     };
   }, [activeId, patchConversations, loadUnreadTotal]);
 
-  async function loadOlderMessages() {
-    if (!activeId || !olderCursor) return;
+  // One page of older messages. Resolves true while there are more still older. The cursor is read from a ref, so
+  // calls in a row (finding a quoted message further up: ChatPanel's jumpTo) each get the next page, not the same one.
+  async function loadOlderMessages(): Promise<boolean> {
+    const cursorNow = olderCursorRef.current;
+    if (!activeId || !cursorNow) return false;
     try {
-      const page = await fetchMessages(activeId, olderCursor);
+      const page = await fetchMessages(activeId, cursorNow);
       const cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+      if (activeIdRef.current !== activeId) return false; // another chat was opened meanwhile
+      olderCursorRef.current = cursor;
       setMessages((prev) => {
         const next = [...page.nodes.filter((m) => !prev.some((p) => p.id === m.id)), ...prev];
         const c = messagesCache.get(activeId);
@@ -1243,8 +1319,10 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
         return next;
       });
       setOlderCursor(cursor);
+      return !!cursor;
     } catch (err) {
       alert((err as Error).message);
+      return false;
     }
   }
 
@@ -1317,6 +1395,11 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
         defaultCountry={defaultCountry}
         conversationsError={conversationsError}
         onLoadMore={conversationsCursor ? loadMoreConversations : undefined}
+        matchCount={conversationsError ? null : matchCount}
+        hits={searchQuery.trim() ? hits : null}
+        hitsLoading={hitsLoading || (!!searchQuery.trim() && searchQuery.trim() !== searchTerm)}
+        onLoadMoreHits={hits?.cursor ? loadMoreHits : undefined}
+        onOpenHit={openHit}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         filterType={filterType}
@@ -1356,6 +1439,9 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
           conversation={active}
           messages={messagesChatId === active.id ? messages : []}
           onLoadOlder={olderCursor ? loadOlderMessages : undefined}
+          focusMessageId={focusMessage?.conversationId === active.id ? focusMessage.messageId : null}
+          focusNonce={focusMessage?.nonce ?? 0}
+          onFocusDone={() => setFocusMessage(null)}
           onSent={(m) => {
             setMessages((p) => {
               const next = p.some((x) => x.id === m.id) ? p : [...p, m];
@@ -1491,6 +1577,11 @@ function ConversationList({
   defaultCountry,
   conversationsError,
   onLoadMore,
+  matchCount,
+  hits,
+  hitsLoading,
+  onLoadMoreHits,
+  onOpenHit,
   searchQuery,
   sortOrder,
   onSortChange,
@@ -1545,6 +1636,13 @@ function ConversationList({
   // empty-state copy
   conversationsError?: string | null;
   onLoadMore?: () => void;
+  // Every chat the filters match on the server (one per contact), for the "Total Contacts" footer; null until known
+  matchCount: number | null;
+  // Search → "Messages" section: the found messages (null while not searching), and what to do with them
+  hits: { term: string; items: MessageHit[]; cursor: string | null; total: number | null; words: string[]; error: string | null } | null;
+  hitsLoading: boolean;
+  onLoadMoreHits?: () => void;
+  onOpenHit: (hit: MessageHit) => void;
   searchQuery: string;
   sortOrder: SortOrder;
   onSortChange: (s: SortOrder) => void;
@@ -1573,6 +1671,8 @@ function ConversationList({
 }) {
   const listContainerRef = useRef<HTMLDivElement>(null);
   const mentionsPage = usePathname() === '/mentions';
+  // Something typed in the search box: the list shows "Chats" and "Messages" sections, like WhatsApp
+  const searching = searchQuery.trim() !== '';
   const scrollKey = `support:scroll:list:${mine ? 'mine' : leads ? 'leads' : collab ? 'collab' : mentionsPage ? 'mentions' : 'inbox'}`;
   const restoredScrollRef = useRef<string | null>(null);
 
@@ -1751,7 +1851,7 @@ function ConversationList({
               Retry
             </button>
           </div>
-        ) : conversations.length === 0 && filterType !== 'all' ? (
+        ) : conversations.length === 0 && searching ? null /* no chats: only the Messages section below (or "nothing found") */ : conversations.length === 0 && filterType !== 'all' ? (
           <p className="p-5 text-xs leading-relaxed text-muted">No conversations match this filter.</p>
         ) : conversations.length === 0 && leads ? (
           <p className="p-5 text-xs leading-relaxed text-muted">
@@ -1802,6 +1902,8 @@ function ConversationList({
           </div>
         ) : (
           <ul className="divide-y divide-line-soft">
+            {/* Searching: the chats (by name, number, label or assignee) come under "Chats", the messages below */}
+            {searching && <SearchHeading>Chats</SearchHeading>}
             {leads && claimError && (
               <li className="bg-danger-soft px-3.5 py-2 text-[11px] text-danger">{claimError.message}</li>
             )}
@@ -1958,8 +2060,88 @@ function ConversationList({
             Load more conversations
           </button>
         )}
+        {/* Search → Messages (like WhatsApp): each message with all the typed words, its words highlighted; a click
+            opens the chat at that message */}
+        {searching && hits && hits.term === searchQuery.trim() && hits.items.length > 0 && (
+          <ul className="divide-y divide-line-soft border-t border-line-soft">
+            <SearchHeading>Messages{hits.total !== null ? ` (${hits.total.toLocaleString('en-US')})` : ''}</SearchHeading>
+            {hits.items.map((hit) => (
+              <MessageHitRow key={hit.message.id} hit={hit} words={hits.words} active={hit.conversationId === activeId} onOpen={() => onOpenHit(hit)} />
+            ))}
+          </ul>
+        )}
+        {searching && onLoadMoreHits && hits?.term === searchQuery.trim() && (
+          <button
+            onClick={onLoadMoreHits}
+            disabled={hitsLoading}
+            className="w-full border-t border-line-soft py-2.5 text-xs font-medium text-primary hover:bg-surface-muted disabled:opacity-50 transition"
+          >
+            More messages
+          </button>
+        )}
+        {searching && hitsLoading && !(hits?.term === searchQuery.trim() && hits.items.length) && (
+          <p className="px-3.5 py-3 text-[11px] text-muted">Searching messages…</p>
+        )}
+        {searching && hits?.error && hits.term === searchQuery.trim() && <p className="px-3.5 py-3 text-[11px] text-danger">{hits.error}</p>}
+        {searching && !hitsLoading && !conversationsError && conversations.length === 0 && hits?.term === searchQuery.trim() && !hits.items.length && !hits.error && (
+          <p className="p-5 text-xs leading-relaxed text-muted">
+            No chats or messages found for &ldquo;{searchQuery.trim()}&rdquo;.
+          </p>
+        )}
       </div>
+      {/* Sticky footer: how many contacts the current view, tab, search and filters match (all of them on the server,
+          not only the chats loaded so far); stays put while the list scrolls */}
+      {matchCount !== null && (
+        <div role="status" className="shrink-0 border-t border-line-soft bg-surface px-3.5 py-2 text-[11px] text-muted">
+          Total Contacts: <span className="font-semibold text-ink">{matchCount.toLocaleString('en-US')}</span>
+        </div>
+      )}
     </section>
+  );
+}
+
+// "Chats" / "Messages" above the search results
+function SearchHeading({ children }: { children: React.ReactNode }) {
+  return <li className="bg-surface px-3.5 pb-1.5 pt-3 text-[10px] font-bold uppercase tracking-wider text-faint">{children}</li>;
+}
+
+// One found message (search → Messages): the customer, when it was sent (ticks on ours), and a line of the text with
+// the searched words highlighted; a click opens the chat at that message
+function MessageHitRow({ hit, words, active, onOpen }: { hit: MessageHit; words: string[]; active: boolean; onOpen: () => void }) {
+  const m = hit.message;
+  const name = hit.contactName?.trim() || `+${hit.contactWaId}`;
+  const text = searchSnippet(filePreview(m) ?? m.body, words);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className={`flex w-full flex-col gap-0.5 px-3.5 py-2.5 text-left transition ${active ? 'bg-primary-subtle' : 'hover:bg-surface-muted'}`}
+      >
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate text-xs font-semibold text-ink">{name}</span>
+          <span className="shrink-0 text-[10px] text-faint">{listTimestamp(m.createdAt)}</span>
+        </span>
+        <span className="flex min-w-0 items-start gap-1 text-[11px] leading-snug text-body-soft">
+          {m.direction === 'out' && (
+            <span className="mt-px shrink-0">
+              <StatusTicks status={m.status} error={m.error} />
+            </span>
+          )}
+          <span className="line-clamp-2 break-words">
+            {highlightWords(text, words).map((s, i) =>
+              s.match ? (
+                <strong key={i} className="font-semibold text-primary">
+                  {s.text}
+                </strong>
+              ) : (
+                <Fragment key={i}>{s.text}</Fragment>
+              ),
+            )}
+          </span>
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -1980,6 +2162,9 @@ function ChatPanel({
   messages,
   isChatLoading = false,
   onLoadOlder,
+  focusMessageId,
+  focusNonce,
+  onFocusDone,
   onSent,
   meName,
   onOpenLabels,
@@ -2008,7 +2193,12 @@ function ChatPanel({
   meName: string; // you: the "My name" quick fill when sending a template
   messages: Message[];
   isChatLoading?: boolean;
-  onLoadOlder?: () => void;
+  // Loads one page of older messages; resolves true while there are more
+  onLoadOlder?: () => Promise<boolean>;
+  // Opened from a search result: the message to go to once the chat is on screen (focusNonce: a new click on the same one)
+  focusMessageId: string | null;
+  focusNonce: number;
+  onFocusDone: () => void;
   onSent: (m: Message) => void;
   onOpenLabels: (anchor: HTMLElement) => void;
   viewer: { userId: string; isAdmin: boolean; role?: string } | null;
@@ -2507,11 +2697,45 @@ function ChatPanel({
     }
   }, [replyTo, replyLive?.deletedAt]);
 
-  // Go to the message a reply quotes (if it's loaded) and mark it for a moment
-  function jumpTo(id: string) {
-    const el = messagesContainerRef.current?.querySelector(`[data-message-id="${id}"]`);
-    if (!el) return setError('The original message is further up: load earlier messages to see it.');
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // Go to the message a reply quotes (or a pinned message) and mark it for a moment, like WhatsApp. One that isn't
+  // loaded yet is further up: earlier messages are loaded, a page at a time, until it is (at most JUMP_MAX_PAGES).
+  const [finding, setFinding] = useState(false);
+  const findingRef = useRef(false);
+  const chatIdRef = useRef(conversation.id);
+  chatIdRef.current = conversation.id;
+  async function jumpTo(id: string) {
+    const find = () => messagesContainerRef.current?.querySelector(`[data-message-id="${id}"]`) ?? null;
+    let el = find();
+    if (!el && onLoadOlder) {
+      if (findingRef.current) return; // already looking for one
+      findingRef.current = true;
+      setFinding(true);
+      setError('');
+      const chatId = conversation.id;
+      try {
+        let more = true;
+        for (let page = 0; !el && more && page < JUMP_MAX_PAGES; page++) {
+          const shown = messagesContainerRef.current?.querySelectorAll('[data-message-id]').length ?? 0;
+          more = await onLoadOlder();
+          if (chatIdRef.current !== chatId) return; // another chat was opened
+          // Wait (up to 2 s) for the new page to be drawn
+          for (let t = 0; t < 40 && (messagesContainerRef.current?.querySelectorAll('[data-message-id]').length ?? 0) <= shown; t++)
+            await new Promise((r) => setTimeout(r, 50));
+          el = find();
+        }
+      } finally {
+        findingRef.current = false;
+        setFinding(false);
+      }
+      if (chatIdRef.current !== chatId) return;
+    }
+    // Not in this chat's history (e.g. cleared from your view with Clear chat), or further back than we look
+    if (!el) return setError("Couldn't find the original message. It may have been cleared from this chat.");
+    // Smooth when it's close; far away (e.g. pages back) it jumps straight there, like WhatsApp, so the reader isn't
+    // left watching a long scroll while the highlight below fades
+    const box = messagesContainerRef.current;
+    const far = !!box && Math.abs(el.getBoundingClientRect().top - box.getBoundingClientRect().top) > box.clientHeight * 2;
+    el.scrollIntoView({ block: 'center', behavior: far ? 'auto' : 'smooth' });
     setFlashId(id);
     setTimeout(() => setFlashId((f) => (f === id ? null : f)), 1600);
   }
@@ -2539,7 +2763,7 @@ function ChatPanel({
       requestAnimationFrame(() => inputRef.current?.focus());
     } else if (action === 'copy') {
       // A photo or sticker copies the picture itself (pasting it in a chat attaches it); anything else its text
-      if ((m.type === 'image' || m.type === 'sticker') && m.mediaMime) copyImage(m.id, m.body).catch((err) => setError((err as Error).message));
+      if ((m.type === 'image' || m.type === 'sticker') && m.mediaMime) copyImage(m.id).catch((err) => setError((err as Error).message));
       else if (!navigator.clipboard?.writeText) setError("This browser doesn't allow copying here. Select the text and press Ctrl+C instead.");
       else navigator.clipboard.writeText(m.body).catch(() => setError("Couldn't copy to the clipboard"));
     } else if (action === 'pin' || action === 'unpin') {
@@ -2721,6 +2945,17 @@ function ChatPanel({
     } catch {}
     toBottom(el);
   }, [conversation.id, lastId, chatScrollKey]);
+
+  // Opened from a search result (Messages): once this chat's messages are on screen, go to that message (loading
+  // earlier ones if it's further back) and mark it, like a quoted message. After the scroll handling above, so the
+  // usual "open at the bottom" doesn't undo it.
+  const hasMessages = messages.length > 0;
+  useEffect(() => {
+    if (!focusMessageId || !hasMessages) return;
+    onFocusDone();
+    void jumpTo(focusMessageId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusMessageId, focusNonce, hasMessages]);
 
   // Images, videos and voice notes get their height when they finish loading: stay at the bottom if the reader is there
   useEffect(() => {
@@ -3055,6 +3290,12 @@ function ChatPanel({
         style={{ scrollbarGutter: 'stable' }}
         className="relative z-10 flex-1 min-h-0 space-y-2.5 overflow-y-auto px-6 py-4"
       >
+        {/* While earlier messages are loaded to reach a quoted message: a note pinned to the top of the chat */}
+        {finding && (
+          <div role="status" className="pointer-events-none sticky top-0 z-20 flex h-0 justify-center overflow-visible">
+            <span className="rounded-full bg-ink/85 px-3 py-1 text-[11px] font-medium text-on-primary shadow-md">Finding the original message…</span>
+          </div>
+        )}
         {onLoadOlder && (
           <div className="flex justify-center">
             <button

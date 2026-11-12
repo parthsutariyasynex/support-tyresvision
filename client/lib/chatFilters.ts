@@ -12,16 +12,24 @@ export type MenuFilters = {
   // Last activity range, local calendar days yyyy-mm-dd ('' = open)
   from: string;
   to: string;
+  // Created date range: when the chat was created, local calendar days yyyy-mm-dd ('' = open)
+  createdFrom: string;
+  createdTo: string;
   // Lifecycle stages of the customer (stage values)
   leadStages: string[];
   // Countries (ISO codes, e.g. "AE"): the customer's WhatsApp number starts with that country's calling code
   countries: string[];
 };
 
-export const EMPTY_MENU_FILTERS: MenuFilters = { labelIds: [], assigneeIds: [], from: '', to: '', leadStages: [], countries: [] };
+export const EMPTY_MENU_FILTERS: MenuFilters = { labelIds: [], assigneeIds: [], from: '', to: '', createdFrom: '', createdTo: '', leadStages: [], countries: [] };
 
 export const activeFilterCount = (f: MenuFilters) =>
-  (f.labelIds.length ? 1 : 0) + (f.assigneeIds.length ? 1 : 0) + (f.from || f.to ? 1 : 0) + (f.leadStages.length ? 1 : 0) + (f.countries.length ? 1 : 0);
+  (f.labelIds.length ? 1 : 0) +
+  (f.assigneeIds.length ? 1 : 0) +
+  (f.from || f.to ? 1 : 0) +
+  (f.createdFrom || f.createdTo ? 1 : 0) +
+  (f.leadStages.length ? 1 : 0) +
+  (f.countries.length ? 1 : 0);
 
 // "Country code" in the Filter menu: the Gulf (GCC) countries first, in this order, then every other country A–Z
 export const GULF_COUNTRIES = ['AE', 'SA', 'QA', 'KW', 'BH', 'OM'] as const;
@@ -57,12 +65,14 @@ export function toServerFilter(f: MenuFilters) {
     assigneeIds: f.assigneeIds.length ? f.assigneeIds : null,
     from: dayStart(f.from),
     to: dayEnd(f.to),
+    createdFrom: dayStart(f.createdFrom),
+    createdTo: dayEnd(f.createdTo),
     leadStages: f.leadStages.length ? f.leadStages : null,
     countries: f.countries.length ? f.countries : null,
   };
 }
 
-export function matchesMenuFilters(c: Pick<Conversation, 'labels' | 'assignee' | 'lastMessageAt' | 'contact'>, f: MenuFilters) {
+export function matchesMenuFilters(c: Pick<Conversation, 'labels' | 'assignee' | 'lastMessageAt' | 'createdAt' | 'contact'>, f: MenuFilters) {
   if (f.leadStages.length && !(c.contact.leadStage && f.leadStages.includes(c.contact.leadStage))) return false;
   if (f.countries.length && !callingCodesOf(f.countries).some((code) => c.contact.waId.startsWith(code))) return false;
   if (f.labelIds.length && !c.labels.some((l) => f.labelIds.includes(l.id))) return false;
@@ -75,6 +85,14 @@ export function matchesMenuFilters(c: Pick<Conversation, 'labels' | 'assignee' |
   const to = dayEnd(f.to);
   if (from && at < new Date(from).getTime()) return false;
   if (to && at > new Date(to).getTime()) return false;
+  // Created date (a chat on screen without its creation time is left to the server's filter)
+  if (c.createdAt) {
+    const created = new Date(c.createdAt).getTime();
+    const cFrom = dayStart(f.createdFrom);
+    const cTo = dayEnd(f.createdTo);
+    if (cFrom && created < new Date(cFrom).getTime()) return false;
+    if (cTo && created > new Date(cTo).getTime()) return false;
+  }
   return true;
 }
 

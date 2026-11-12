@@ -1,7 +1,7 @@
 // Run: npm test --workspace=client
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { findMessageMatches, highlightSegments } from './messageSearch';
+import { findMessageMatches, highlightSegments, highlightWords, searchSnippet, searchWords } from './messageSearch';
 
 describe('Search in conversation', () => {
   const msgs = [
@@ -30,5 +30,29 @@ describe('Search in conversation', () => {
     assert.deepEqual(highlightSegments('abc', 'zzz'), [{ text: 'abc', match: false }]);
     assert.deepEqual(highlightSegments('', 'a'), [{ text: '', match: false }]);
     assert.deepEqual(highlightSegments('aaa', 'a'), [{ text: 'a', match: true }, { text: 'a', match: true }, { text: 'a', match: true }]);
+  });
+});
+
+describe('chat list search: Messages section', () => {
+  test('words: split on spaces, each once, at most 10', () => {
+    assert.deepEqual(searchWords('  Metzeler   180/60 R17 '), ['Metzeler', '180/60', 'R17']);
+    assert.deepEqual(searchWords('a a b'), ['a', 'b']);
+    assert.equal(searchWords('1 2 3 4 5 6 7 8 9 10 11 12').length, 10);
+    assert.deepEqual(searchWords('   '), []);
+  });
+  test('each word highlighted on its own, any case, overlaps merged', () => {
+    const words = searchWords('racetec metzeler R17');
+    const marked = highlightWords('Metzeler 180/60 R17 Racetec TD Slick', words).filter((s) => s.match).map((s) => s.text);
+    assert.deepEqual(marked, ['Metzeler', 'R17', 'Racetec']);
+    assert.deepEqual(highlightWords('abcd', ['abc', 'bcd']), [{ text: 'abcd', match: true }]);
+    assert.deepEqual(highlightWords('no match here', ['xyz']), [{ text: 'no match here', match: false }]);
+    assert.equal(highlightWords('Metzeler', ['metz']).map((s) => s.text).join(''), 'Metzeler'); // nothing lost
+  });
+  test('snippet: one line, the first match in view, … where cut', () => {
+    assert.equal(searchSnippet('Line one\nLine two', ['two']), 'Line one Line two');
+    const long = `${'x'.repeat(200)} Metzeler Racetec ${'y'.repeat(200)}`;
+    const s = searchSnippet(long, ['metzeler'], 120);
+    assert.ok(s.startsWith('…') && s.endsWith('…') && s.includes('Metzeler'));
+    assert.ok(searchSnippet(`Metzeler ${'z'.repeat(300)}`, ['metzeler'], 120).startsWith('Metzeler'));
   });
 });
