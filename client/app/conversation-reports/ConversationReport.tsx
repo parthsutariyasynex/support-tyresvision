@@ -7,6 +7,7 @@ import { type ConversationReport as Report, dayEndIso, dayStartIso, fetchConvers
 import { revalidateOnReturn } from '@/lib/revalidate';
 import { addDays, dayKey } from '@/lib/time';
 import { ReportDateRangePicker } from '../ReportDateRangePicker';
+import { CountryFilter } from './CountryFilter';
 
 const PAGE_SIZE = 20;
 
@@ -19,25 +20,31 @@ export function ConversationReport() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  // Country code filter (ISO codes); empty = all countries
+  const [countries, setCountries] = useState<string[]>([]);
 
+  // Ticking several countries quickly starts several loads: only the newest one may update the page
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
-      setReport(await fetchConversationReport({ from: dayStartIso(range.from)!, to: dayEndIso(range.to)! }));
+      const next = await fetchConversationReport({ from: dayStartIso(range.from)!, to: dayEndIso(range.to)!, countries });
+      if (seq === loadSeq.current) setReport(next);
     } catch (err) {
-      setError((err as Error).message);
+      if (seq === loadSeq.current) setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  }, [range]);
+  }, [range, countries]);
 
   useEffect(() => {
     load();
     return revalidateOnReturn(load);
   }, [load]);
 
-  useEffect(() => setPage(1), [range]);
+  useEffect(() => setPage(1), [range, countries]);
 
   const colors = report?.colors ?? { new: '#eab308', won: '#16a34a', lost: '#dc2626' };
   const labels = report?.labels ?? { won: 'Won', lost: 'Lost' };
@@ -82,6 +89,7 @@ export function ConversationReport() {
             <p className="mt-1 text-xs text-muted">New customers whose first chat started in the selected dates, and how many of them were won or lost.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
+            <CountryFilter value={countries} onChange={setCountries} />
             <ReportDateRangePicker
               value={range}
               preset={preset}

@@ -1,3 +1,4 @@
+import { type CountryCode, getCountryCallingCode, isSupportedCountry } from 'libphonenumber-js';
 import type { AuthPayload } from '../auth.js';
 import { prisma } from '../prisma.js';
 import { AppError } from './errors.js';
@@ -23,8 +24,24 @@ function validDate(d: Date | null | undefined, name: string) {
   return d;
 }
 
+// "Country code" filter (ISO codes, e.g. "AE"): customers whose WhatsApp number starts with one of these countries'
+// calling codes, the same rule as the chat list's Country code filter. Countries sharing a code (US and Canada, +1)
+// match the same numbers. Empty or missing = every country.
+function countryWhere(countries: string[] | null | undefined) {
+  if (!countries?.length) return {};
+  if (countries.length > 300) throw new AppError('Too many countries', 400, 'BAD_USER_INPUT');
+  const unknown = countries.find((c) => !isSupportedCountry(c));
+  if (unknown) throw new AppError(`Unknown country code "${unknown}"`, 400, 'BAD_USER_INPUT');
+  // Calling codes never start with another one (E.164), so a prefix match picks out exactly that country code
+  const codes = [...new Set(countries.map((c) => getCountryCallingCode(c as CountryCode) as string))];
+  return { OR: codes.map((code) => ({ waId: { startsWith: code } })) };
+}
+
 // Owners and admins only; never crosses workspaces. Oldest first.
-export async function conversationReport(auth: AuthPayload, filter: { from?: Date | null; to?: Date | null }) {
+export async function conversationReport(
+  auth: AuthPayload,
+  filter: { from?: Date | null; to?: Date | null; countries?: string[] | null },
+) {
   await requireAdmin(auth);
   const from = validDate(filter.from, 'from');
   const to = validDate(filter.to, 'to');
@@ -38,7 +55,7 @@ export async function conversationReport(auth: AuthPayload, filter: { from?: Dat
   const byValue = new Map(stages.map((s) => [s.value, s]));
 
   const rows = await prisma.contact.findMany({
-    where: { workspaceId: auth.workspaceId, deletedAt: null, conversations: { some: {} }, createdAt: { gte: from, lte: to } },
+    where: { workspaceId: auth.workspaceId, deletedAt: null, conversations: { some: {} }, createdAt: { gte: from, lte: to }, ...countryWhere(filter.countries) },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: CONVERSATION_REPORT_MAX_ROWS,
     select: { id: true, name: true, firstName: true, lastName: true, waId: true, email: true, leadStage: true, createdAt: true },

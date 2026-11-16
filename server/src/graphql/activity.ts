@@ -1,6 +1,7 @@
 import { listContactActivity, listConversationActivity, listNotifications, markNotificationsSeen, unreadTotal } from '../services/activity.js';
 import { getPermissions } from '../services/permissions.js';
 import { clearedAt } from '../services/conversationClear.js';
+import { myReminders } from '../services/assignmentReminders.js';
 import { authed } from './shared.js';
 
 export const typeDefs = /* GraphQL */ `
@@ -28,7 +29,31 @@ export const typeDefs = /* GraphQL */ `
     seenAt: DateTime
   }
 
+  "A chat waiting for you (header → Reminders)"
+  type ReminderChat {
+    conversationId: ID!
+    contactName: String
+    contactWaId: String!
+    "assigned (to you) | unassigned (nobody has taken it)"
+    kind: String!
+    "Assigned to you and not opened since"
+    notOpened: Boolean!
+    "Unread customer messages"
+    unread: Int!
+    "When it started waiting"
+    waitingSince: DateTime!
+  }
+
+  type Reminders {
+    "The workspace's reminder time in minutes (0 = reminders off)"
+    minutes: Int!
+    "Longest waiting first"
+    chats: [ReminderChat!]!
+  }
+
   extend type Query {
+    "Chats waiting for you now, by the same rules as the reminder pop-ups"
+    myReminders: Reminders!
     "Timeline for a chat, oldest first (customer messages are left out; they're bubbles)"
     conversationActivity(conversationId: ID!): [Activity!]!
     "Contact details page: everything for this customer's chat, newest first (customer messages, profile changes and remarks included)"
@@ -56,6 +81,7 @@ export const resolvers = {
     ),
     notifications: authed(({ first }: { first?: number | null }, auth) => listNotifications(auth, first ?? undefined)),
     unreadTotal: authed((_args, { workspaceId }) => unreadTotal(workspaceId)),
+    myReminders: authed((_args, auth) => myReminders(auth)),
   },
   Mutation: {
     markNotificationsSeen: authed((_args, auth) => markNotificationsSeen(auth)),

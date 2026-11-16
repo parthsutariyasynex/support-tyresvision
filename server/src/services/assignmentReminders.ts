@@ -59,35 +59,35 @@ export function isDue(c: Parameters<typeof pendingSince>[0] & Pick<Row, 'reminde
   return now.getTime() - from.getTime() >= ms;
 }
 
+// Open chats that may be waiting (pendingSince decides), and what the rules need of them
+const MAYBE_PENDING = {
+  status: 'open',
+  contact: { deletedAt: null },
+  OR: [
+    { assignedToId: { not: null }, OR: [{ assigneeOpenedAt: null }, { unread: { gt: 0 } }] },
+    { assignedToId: null, OR: [{ lastInboundAt: { not: null } }, { unread: { gt: 0 } }] },
+  ],
+};
+const ROW_SELECT = {
+  id: true,
+  workspaceId: true,
+  unread: true,
+  lastMessageAt: true,
+  lastInboundAt: true,
+  createdAt: true,
+  updatedAt: true,
+  assignedAt: true,
+  assigneeOpenedAt: true,
+  reminderSentAt: true,
+  contact: { select: { name: true, waId: true } },
+  assignedTo: { select: { userId: true, active: true } },
+} as const;
+
 // Chats due now (all workspaces, or one). Read-only (claiming happens in sendAssignmentReminders).
 export async function findChatsNeedingAttention(now = new Date(), msOrDefault?: number, workspaceId?: string) {
   const explicit = msOrDefault !== undefined;
   const ms = msOrDefault ?? thresholdMs();
-  const rows: Row[] = await prisma.conversation.findMany({
-    where: {
-      ...(workspaceId ? { workspaceId } : {}),
-      status: 'open',
-      contact: { deletedAt: null },
-      OR: [
-        { assignedToId: { not: null }, OR: [{ assigneeOpenedAt: null }, { unread: { gt: 0 } }] },
-        { assignedToId: null, OR: [{ lastInboundAt: { not: null } }, { unread: { gt: 0 } }] },
-      ],
-    },
-    select: {
-      id: true,
-      workspaceId: true,
-      unread: true,
-      lastMessageAt: true,
-      lastInboundAt: true,
-      createdAt: true,
-      updatedAt: true,
-      assignedAt: true,
-      assigneeOpenedAt: true,
-      reminderSentAt: true,
-      contact: { select: { name: true, waId: true } },
-      assignedTo: { select: { userId: true, active: true } },
-    },
-  });
+  const rows: Row[] = await prisma.conversation.findMany({ where: { ...(workspaceId ? { workspaceId } : {}), ...MAYBE_PENDING }, select: ROW_SELECT });
   if (explicit) return rows.filter((c) => isDue(c, now, ms));
   // Each workspace's own reminder time (Settings → Workspace preferences; 0 = off there)
   const minutes = new Map<string, number>();
@@ -158,4 +158,38 @@ export function startAssignmentReminders(minutes = env.assignmentReminderMinutes
   const timer = setInterval(tick, Math.min(CHECK_EVERY_MS, ms));
   timer.unref(); // never keeps the process alive on its own
   return () => clearInterval(timer);
+}
+
+// Header → Reminders (clock): the chats waiting for this person right now, by the same rules as the reminders
+// (pending for at least the workspace's reminder time; unlike the reminders themselves, not paced by when the last
+// one was sent). Assigned chats only for their assignee; unclaimed chats for every active member. Longest waiting
+// first. Reminders off for the workspace (0 minutes): nothing.
+export async function myReminders(auth: { userId: string; workspaceId: string }, now = new Date()) {
+  const member = await prisma.member.findFirst({ where: { workspaceId: auth.workspaceId, userId: auth.userId, active: true }, select: { id: true } });
+  const minutes = (await settingsOf(auth.workspaceId)).reminderMinutes;
+  if (!member || !(minutes > 0)) return { minutes, chats: [] };
+  const rows: Row[] = await prisma.conversation.findMany({
+    where: {
+      workspaceId: auth.workspaceId,
+      ...MAYBE_PENDING,
+      OR: [{ assignedToId: null }, { assignedTo: { userId: auth.userId } }],
+      AND: [{ OR: MAYBE_PENDING.OR }],
+    },
+    select: ROW_SELECT,
+  });
+  const chats = rows
+    .map((c) => ({ c, since: pendingSince(c) }))
+    .filter((x): x is { c: Row; since: Date } => !!x.since && now.getTime() - x.since.getTime() >= thresholdMs(minutes))
+    .sort((a, b) => a.since.getTime() - b.since.getTime())
+    .map(({ c, since }) => ({
+      conversationId: c.id,
+      contactName: c.contact.name || null,
+      contactWaId: c.contact.waId,
+      kind: (c.assignedTo ? 'assigned' : 'unassigned') as ReminderKind,
+      // assigned: not opened since it was assigned, or opened with new customer messages since (unread)
+      notOpened: !!c.assignedTo && !c.assigneeOpenedAt,
+      unread: c.unread,
+      waitingSince: since,
+    }));
+  return { minutes, chats };
 }

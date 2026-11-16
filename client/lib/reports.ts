@@ -92,9 +92,10 @@ export type ConversationReport = {
   customers: ConversationReportCustomer[];
 };
 
-export async function fetchConversationReport(range: { from: string; to: string }) {
-  const query = `query ConversationReport($from: DateTime!, $to: DateTime!) {
-    conversationReport(from: $from, to: $to) {
+// countries: ISO codes (e.g. "AE") for the Country code filter; empty = every country
+export async function fetchConversationReport(range: { from: string; to: string; countries?: string[] }) {
+  const query = `query ConversationReport($from: DateTime!, $to: DateTime!, $countries: [String!]) {
+    conversationReport(from: $from, to: $to, countries: $countries) {
       totalNew totalWon totalLost totalOpen truncated
       colors { new won lost }
       labels { won lost }
@@ -102,7 +103,13 @@ export async function fetchConversationReport(range: { from: string; to: string 
       customers { id name waId email createdAt outcome stage stageLabel stageColor }
     }
   }`;
-  return (await gql<{ conversationReport: ConversationReport }>(query, range)).conversationReport;
+  return (
+    await gql<{ conversationReport: ConversationReport }>(query, {
+      from: range.from,
+      to: range.to,
+      countries: range.countries?.length ? range.countries : null,
+    })
+  ).conversationReport;
 }
 
 // Dubai calendar day (yyyy-mm-dd) -> ISO bounds for the server (start of day / end of day in Dubai time)

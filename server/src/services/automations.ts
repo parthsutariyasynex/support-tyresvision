@@ -18,12 +18,16 @@ import { logEvent, logFailure, logMessageSend, withMessageTrace } from './loggin
 //  1. routing: a chat nobody holds is assigned to the next of the chosen members, in turn (optionally only to
 //     those online right now);
 //  2. auto-reply: one text during working hours, another outside them, filled in with the customer's details.
-//     A chat gets at most one automatic reply per cooldown, so a conversation isn't answered on every message.
+//     A chat gets at most one automatic reply per cooldown, so a conversation isn't answered on every message,
+//     and none while the team is already talking with the customer (see TEAM_ACTIVE_HOURS).
 // Working hours use the workspace's default time zone (Workspace preferences). Nothing runs while disabled, and
 // nothing here can stop an incoming message from being saved (failures are only logged).
 
 // Automatic replies go out as WhatsApp text messages: WhatsApp's own limit (4096 characters), no lower app limit
 export const REPLY_MAX = 4096;
+
+// Longest cooldown: "1 month" (30 days) in the settings page
+export const COOLDOWN_MAX_HOURS = 720;
 
 // --- Pure rules
 
@@ -148,7 +152,7 @@ const updateSchema = z
     replyInHours: z.string().trim().max(REPLY_MAX, `Replies can be up to ${REPLY_MAX} characters`).optional(),
     replyOutHoursEnabled: z.boolean().optional(),
     replyOutHours: z.string().trim().max(REPLY_MAX, `Replies can be up to ${REPLY_MAX} characters`).optional(),
-    cooldownHours: z.number().int().min(1, 'At least 1 hour').max(168, 'Up to 168 hours (a week)').optional(),
+    cooldownHours: z.number().int().min(1, 'At least 1 hour').max(COOLDOWN_MAX_HOURS, 'Up to 720 hours (a month)').optional(),
     routingEnabled: z.boolean().optional(),
     routingMode: z.enum(ROUTING_MODES, { message: 'Choose how new chats are routed' }).optional(),
     routingMemberIds: z.array(z.string().min(1)).max(200).optional(),
@@ -260,6 +264,20 @@ export async function sendAutomatedText(
   return null;
 }
 
+// No automatic reply while the team is already talking with the customer: a teammate (or the AI Robot) sent them a
+// message in the last 24 hours. Then the customer's message is part of an ongoing conversation, not a new enquiry,
+// and a "Welcome" or "We're closed" text in the middle of it reads wrong. Earlier automatic replies don't count
+// (the cooldown covers those), nor do sends WhatsApp refused (the customer never got them).
+export const TEAM_ACTIVE_HOURS = 24;
+async function teamTalkingWith(conversationId: string, now: Date) {
+  const since = new Date(now.getTime() - TEAM_ACTIVE_HOURS * 3_600_000);
+  const hit = await prisma.message.findFirst({
+    where: { conversationId, direction: 'out', createdAt: { gte: since }, status: { not: 'failed' }, OR: [{ automation: null }, { automation: { not: 'auto_reply' } }] },
+    select: { id: true },
+  });
+  return !!hit;
+}
+
 export async function runAutomations(workspaceId: string, conversationId: string, now = new Date()) {
   const row = await prisma.automationSettings.findUnique({ where: { workspaceId } });
   if (!row?.enabled) return { assigned: null as string | null, replied: null as string | null };
@@ -296,9 +314,10 @@ export async function runAutomations(workspaceId: string, conversationId: string
     const text = inHours ? (s.replyInHoursEnabled ? s.replyInHours : '') : s.replyOutHoursEnabled ? s.replyOutHours : '';
     const conv = await prisma.conversation.findUnique({ where: { id: conversationId }, include: { contact: true } });
     const recently = conv?.lastAutoReplyAt && now.getTime() - conv.lastAutoReplyAt.getTime() < s.cooldownHours * 3_600_000;
-    const account = text && conv && !recently ? await prisma.whatsAppAccount.findUnique({ where: { workspaceId } }) : null;
+    const talking = text && conv && !recently ? await teamTalkingWith(conversationId, now) : false;
+    const account = text && conv && !recently && !talking ? await prisma.whatsAppAccount.findUnique({ where: { workspaceId } }) : null;
     // Only inside WhatsApp's 24-hour window (a webhook Meta delivers late can be from a customer who wrote over a day ago)
-    if (text && conv && !recently && account && conv.status !== 'closed' && windowOpen(conv.lastInboundAt, now.getTime())) {
+    if (text && conv && !recently && !talking && account && conv.status !== 'closed' && windowOpen(conv.lastInboundAt, now.getTime())) {
       const body = fillVariables(text, await variableValues(workspaceId, conversationId));
       // Claimed first (compare-and-set on lastAutoReplyAt), so two messages arriving together send one reply
       const { count } = await prisma.conversation.updateMany({ where: { id: conversationId, lastAutoReplyAt: conv.lastAutoReplyAt }, data: { lastAutoReplyAt: now } });

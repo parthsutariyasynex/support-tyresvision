@@ -98,8 +98,8 @@ export const typeDefs = /* GraphQL */ `
   extend type Query {
     "Owners and admins only (FORBIDDEN otherwise). Newest first; from/to bound the assignment time; first caps the rows (max 10000)."
     assignmentReport(from: DateTime, to: DateTime, conversationId: ID, first: Int): [AssignmentRecord!]!
-    "Owners and admins only (FORBIDDEN otherwise). Customers whose first chat started between from and to."
-    conversationReport(from: DateTime!, to: DateTime!): ConversationReport!
+    "Owners and admins only (FORBIDDEN otherwise). Customers whose first chat started between from and to; countries (ISO codes, e.g. AE) keeps only customers whose WhatsApp number has one of those calling codes."
+    conversationReport(from: DateTime!, to: DateTime!, countries: [String!]): ConversationReport!
   }
 `;
 
@@ -109,6 +109,6 @@ export const resolvers = {
       (args: { from?: Date | null; to?: Date | null; conversationId?: string | null; first?: number | null }, auth) =>
         listAssignmentReport(auth, args),
     ),
-    conversationReport: authed((args: { from: Date; to: Date }, auth) => conversationReport(auth, args)),
+    conversationReport: authed((args: { from: Date; to: Date; countries?: string[] | null }, auth) => conversationReport(auth, args)),
   },
 };

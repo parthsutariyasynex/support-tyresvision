@@ -1,5 +1,6 @@
 'use client';
 
+import { refreshReminders, reminderClockMounted } from '@/lib/reminders';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -229,6 +230,8 @@ export function AppShell({
     for (const ev of ['chat:new', 'conversation:started', 'contact:updated', 'contact:deleted', 'contact:restored']) socket.on(ev, stageCountsChanged);
     socket.on('assignment:reminder', (e: ReminderEvent) => {
       if (!e?.chats?.length) return;
+      // On the chat pages the header clock (Reminders) lists them instead of a pop-up over the chat you're in
+      if (reminderClockMounted()) return refreshReminders();
       const t = reminderText(e);
       showToast(t.key, e.chats[0].conversationId, t.message, t.detail);
     });

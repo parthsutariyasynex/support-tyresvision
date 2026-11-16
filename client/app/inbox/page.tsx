@@ -97,6 +97,8 @@ import { NO_DELETE, createDeleteChat, deleteChatText, withoutChat } from '@/lib/
 import { snoozeChoices, snoozedUntilText } from '@/lib/snooze';
 import { LabelChips, LabelPicker, TagIcon } from './labels';
 import { NotificationBell, unlockSound } from './notifications';
+import { ReminderClock } from './ReminderClock';
+import { refreshReminders } from '@/lib/reminders';
 import { setOpenConversationId } from '@/lib/desktopNotifications';
 import { dismissChatPopups } from '@/lib/messagePopups';
 import { isWindowClosedError, lastCustomerMessageAt, msUntilClose, windowOpen } from '@/lib/messagingWindow';
@@ -1064,6 +1066,28 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
       if (!document.hidden && conversationsRef.current.some((c) => c.id === id && c.unread > 0)) void readOpenChat().then(loadUnreadTotal);
     };
     document.addEventListener('visibilitychange', onShown);
+    // Header → Reminders: these can add or settle a waiting chat (new chats and customer messages, opened/read,
+    // assigned/unassigned, closed or snoozed, deleted, the workspace's reminder time); the clock reloads its list
+    const reminderTriggers = new Set([
+      'chat:new',
+      'conversation:started',
+      'message:new',
+      'conversation:unread',
+      'conversation:assigned',
+      'assignment:you',
+      'assignment:removed',
+      'assignment:changed',
+      'conversation:status',
+      'conversation:deleted',
+      'contact:deleted',
+      'contact:restored',
+      'member:removed',
+      'workspace:settings',
+      'assignment:reminder',
+    ]);
+    socket.onAny((event: string) => {
+      if (reminderTriggers.has(event)) refreshReminders();
+    });
     socket.on('typing', (e: TypingEvent) => {
       if (e.userId === permissionsRef.current?.userId) return; // yourself in another tab
       setTyping((s) => applyTypingEvent(s, e));
@@ -1506,6 +1530,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
           />,
           headerSlot,
         )}
+      {headerSlot && createPortal(<ReminderClock activeId={activeId} onSelect={openConversation} />, headerSlot)}
       {headerSlot &&
         createPortal(
           <AssignDropdown

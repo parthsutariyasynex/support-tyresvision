@@ -54,7 +54,7 @@ const EDITABLE: (keyof Editable)[] = [
   'routingOnlineOnly',
 ];
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-const COOLDOWNS = [1, 4, 8, 12, 24, 48, 72, 168];
+const COOLDOWNS = [1, 4, 8, 12, 24, 48, 72, 168, 720];
 const ROUTING_OPTIONS: {
   value: AutomationSettings['routingMode'];
   title: string;
@@ -240,11 +240,14 @@ function Automations({ me }: { me: Me }) {
                   .sort((a, b) => a - b)
                   .map((h) => (
                     <option key={h} value={h}>
-                      {h === 168 ? '1 week' : `${h} ${h === 1 ? 'hour' : 'hours'}`}
+                      {h === 168 ? '1 week' : h === 720 ? '1 month' : `${h} ${h === 1 ? 'hour' : 'hours'}`}
                     </option>
                   ))}
               </select>
             </label>
+            <p className="mt-2 text-xs text-muted">
+              No automatic reply is sent while your team is already talking with the customer (a teammate or the AI Robot messaged them in the last 24 hours).
+            </p>
           </section>
 
           <section className="mt-5 rounded-xl border border-line bg-surface p-6">
