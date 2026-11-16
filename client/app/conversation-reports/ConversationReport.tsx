@@ -88,7 +88,8 @@ export function ConversationReport() {
             </div>
             <p className="mt-1 text-xs text-muted">New customers whose first chat started in the selected dates, and how many of them were won or lost.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2.5">
+          {/* One line on wide screens: country, dates, refresh (the description on the left wraps instead) */}
+          <div className="flex flex-wrap items-center gap-2.5 lg:shrink-0 lg:flex-nowrap">
             <CountryFilter value={countries} onChange={setCountries} />
             <ReportDateRangePicker
               value={range}
@@ -102,16 +103,16 @@ export function ConversationReport() {
               type="button"
               disabled={loading}
               onClick={load}
-              title="Refresh report data"
-              className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-2 text-xs font-semibold text-body transition hover:bg-surface-strong disabled:opacity-50"
+              title={loading ? 'Updating…' : 'Refresh report data'}
+              aria-label={loading ? 'Updating report data' : 'Refresh report data'}
+              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-body transition hover:bg-surface-strong disabled:opacity-50"
             >
-              <svg className={`h-3.5 w-3.5 ${loading ? 'animate-spin text-primary' : 'text-muted'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg className={`h-4 w-4 ${loading ? 'animate-spin text-primary' : 'text-muted'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                 <path d="M3 3v5h5" />
                 <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
                 <path d="M16 21h5v-5" />
               </svg>
-              <span>{loading ? 'Updating…' : 'Refresh'}</span>
             </button>
           </div>
         </div>

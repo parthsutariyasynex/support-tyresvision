@@ -49,14 +49,15 @@ export function CountryFilter({ value, onChange }: { value: string[]; onChange: 
         aria-haspopup="menu"
         aria-expanded={open}
         title={title}
-        className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+        className={`flex w-56 max-w-full items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
           chosen.length ? 'border-primary bg-primary-subtle text-primary' : 'border-line bg-surface text-body hover:bg-surface-strong'
         }`}
       >
         <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10" />
         </svg>
-        <span className="max-w-44 truncate">{label}</span>
+        {/* Fixed-width button: the label changes as countries are picked, the button (and the list under it) stays put */}
+        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
         <svg className={`h-3 w-3 shrink-0 transition ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="m6 9 6 6 6-6" />
         </svg>
