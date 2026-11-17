@@ -27,7 +27,7 @@ function validDate(d: Date | null | undefined, name: string) {
 // "Country code" filter (ISO codes, e.g. "AE"): customers whose WhatsApp number starts with one of these countries'
 // calling codes, the same rule as the chat list's Country code filter. Countries sharing a code (US and Canada, +1)
 // match the same numbers. Empty or missing = every country.
-function countryWhere(countries: string[] | null | undefined) {
+export function countryWhere(countries: string[] | null | undefined) {
   if (!countries?.length) return {};
   if (countries.length > 300) throw new AppError('Too many countries', 400, 'BAD_USER_INPUT');
   const unknown = countries.find((c) => !isSupportedCountry(c));

@@ -5,15 +5,15 @@ import {
   type Reminders,
   REMINDERS_EVENT,
   fetchMyReminders,
-  registerReminderClock,
   reminderReason,
   waitingFor,
 } from '@/lib/reminders';
 import { revalidateOnReturn } from '@/lib/revalidate';
 
-// Header clock (next to the notifications bell): the chats waiting for you, instead of reminder pop-ups over the
-// chat you're in. The badge counts them; the list opens a chat. Reloaded when a reminder arrives or chats change
-// (REMINDERS_EVENT), when you open a chat, and when you come back to the tab.
+// Header clock (next to the notifications bell on the chat pages, in the header on every other page): the chats
+// waiting for you. Reminders are shown only here, never as pop-ups. The badge counts them; the list opens a chat.
+// Reloaded when a reminder arrives or chats change (REMINDERS_EVENT), when you open a chat, and when you come back
+// to the tab.
 export function ReminderClock({ activeId, onSelect }: { activeId: string | null; onSelect: (conversationId: string) => void }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<Reminders | null>(null);
@@ -42,12 +42,10 @@ export function ReminderClock({ activeId, onSelect }: { activeId: string | null;
   }, [load]);
 
   useEffect(() => {
-    const unregister = registerReminderClock();
     void load();
     window.addEventListener(REMINDERS_EVENT, loadSoon);
     const stop = revalidateOnReturn(() => void load());
     return () => {
-      unregister();
       window.removeEventListener(REMINDERS_EVENT, loadSoon);
       stop();
       if (timer.current) clearTimeout(timer.current);

@@ -119,3 +119,71 @@ export function dayStartIso(day: string) {
 export function dayEndIso(day: string) {
   return day ? zonedInstant(day, '23:59:59.999').toISOString() : null;
 }
+
+// Contact Reports: one page of customers matching the filters (newest first), and the choices for the filter menus
+export const NO_STAGE = '__none';
+export type ContactReportLabel = { id: string; name: string; color: string };
+export type ContactReportVehicle = { make: string | null; model: string | null; year: number | null; tireSize1: string; tireSize2: string | null };
+export type ContactReportContact = {
+  id: string;
+  conversationId: string | null;
+  name: string | null;
+  waId: string;
+  createdAt: string;
+  stage: string | null;
+  stageLabel: string | null;
+  stageColor: string | null;
+  labels: ContactReportLabel[];
+  vehicles: ContactReportVehicle[];
+};
+export type ContactReport = {
+  total: number;
+  page: number;
+  pageSize: number;
+  contacts: ContactReportContact[];
+  stages: { value: string; label: string; color: string }[];
+  labels: ContactReportLabel[];
+  makes: string[];
+};
+export type ContactReportFilter = {
+  search?: string;
+  from?: string | null;
+  to?: string | null;
+  countries?: string[];
+  stages?: string[];
+  labelIds?: string[];
+  make?: string;
+  model?: string;
+  tyreSize?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export async function fetchContactReport(f: ContactReportFilter) {
+  const query = `query ContactReport($search: String, $from: DateTime, $to: DateTime, $countries: [String!], $stages: [String!], $labelIds: [ID!], $make: String, $model: String, $tyreSize: String, $page: Int, $pageSize: Int) {
+    contactReport(search: $search, from: $from, to: $to, countries: $countries, stages: $stages, labelIds: $labelIds, make: $make, model: $model, tyreSize: $tyreSize, page: $page, pageSize: $pageSize) {
+      total page pageSize
+      contacts { id conversationId name waId createdAt stage stageLabel stageColor labels { id name color } vehicles { make model year tireSize1 tireSize2 } }
+      stages { value label color }
+      labels { id name color }
+      makes
+    }
+  }`;
+  const list = (a?: string[]) => (a?.length ? a : null);
+  const str = (s?: string) => s?.trim() || null;
+  return (
+    await gql<{ contactReport: ContactReport }>(query, {
+      search: str(f.search),
+      from: f.from ?? null,
+      to: f.to ?? null,
+      countries: list(f.countries),
+      stages: list(f.stages),
+      labelIds: list(f.labelIds),
+      make: str(f.make),
+      model: str(f.model),
+      tyreSize: str(f.tyreSize),
+      page: f.page ?? 1,
+      pageSize: f.pageSize ?? 25,
+    })
+  ).contactReport;
+}

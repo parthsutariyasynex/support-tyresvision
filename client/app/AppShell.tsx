@@ -1,6 +1,6 @@
 'use client';
 
-import { refreshReminders, reminderClockMounted } from '@/lib/reminders';
+import { REMINDER_TRIGGERS, refreshReminders } from '@/lib/reminders';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -15,7 +15,6 @@ import { setBusinessDayStart } from '@/lib/snooze';
 import { setTimeZone } from '@/lib/time';
 import {
   type AssignmentEvent,
-  type ReminderEvent,
   addedAsCollaboratorText,
   assignedToYouText,
   assignmentChangedText,
@@ -24,7 +23,6 @@ import {
   newChatText,
   type MentionEvent,
   mentionedYouText,
-  reminderText,
   removedFromYouText,
   showToast,
   useToast,
@@ -43,6 +41,8 @@ import { type MessageEvent, appInBackground, customerMessageNotice, shouldSuppre
 import { alertsYou, clearMessagePopups, showMessagePopup, soundEnabled } from '@/lib/messagePopups';
 import { fetchConversation } from '@/lib/inbox';
 import { MessagePopups } from './inbox/MessagePopups';
+import { ReminderClock } from './inbox/ReminderClock';
+import { ReportsMenu } from './ReportsMenu';
 // Reports this page's uncaught errors and failed changes to the server's logs (installs its listeners on load)
 import '@/lib/clientLog';
 
@@ -143,7 +143,7 @@ export function AppShell({
   // activity, so Away is measured across the whole app, not only the chat pages)
   const presence = usePresence();
   const myStatus = presenceOf(presence, me?.user.id);
-  // Toasts (assignment, new chat, reminders) on every page: this one connection receives them, so they work on
+  // Toasts (assignment, new chat; reminders go to the header clock instead) on every page: this one connection receives them, so they work on
   // Teams, Reports and Account too, not only the chat pages. The server sends each person only their own events.
   const toast = useToast();
   const pathnameRef = useRef(pathname);
@@ -228,12 +228,10 @@ export function AppShell({
     // (conversation:started covers both a brand-new manual chat and a deleted contact's chat coming back)
     const stageCountsChanged = () => window.dispatchEvent(new Event(STAGE_COUNTS_EVENT));
     for (const ev of ['chat:new', 'conversation:started', 'contact:updated', 'contact:deleted', 'contact:restored']) socket.on(ev, stageCountsChanged);
-    socket.on('assignment:reminder', (e: ReminderEvent) => {
-      if (!e?.chats?.length) return;
-      // On the chat pages the header clock (Reminders) lists them instead of a pop-up over the chat you're in
-      if (reminderClockMounted()) return refreshReminders();
-      const t = reminderText(e);
-      showToast(t.key, e.chats[0].conversationId, t.message, t.detail);
+    // Reminders: only the header clock (on every page) lists them, never a pop-up. It reloads its list on a reminder
+    // and on anything that can change it (new chats and messages, read, assigned, closed...).
+    socket.onAny((event: string) => {
+      if (REMINDER_TRIGGERS.has(event)) refreshReminders();
     });
     // Sound needs one click or key press before browsers allow it
     const unlock = () => unlockSound();
@@ -461,7 +459,7 @@ export function AppShell({
                 <p className="px-2 pb-1.5 text-[10px] font-bold tracking-wider text-faint uppercase">
                   CONVERSATIONS
                 </p>
-                {menuQuery.trim() && !['Inbox', 'New Leads', 'My Chats', 'Collaborations', 'Mentions', ...(isAdminRole(me.role) ? ['Teams', 'Reports', 'Conversation Reports'] : [])].some(showItem) && (
+                {menuQuery.trim() && !['Inbox', 'New Leads', 'My Chats', 'Collaborations', 'Mentions', ...(isAdminRole(me.role) ? ['Teams', 'Reports', 'Activity Reports', 'Conversation Reports', 'Contact Reports'] : [])].some(showItem) && (
                   <p className="px-2.5 py-2 text-[11px] text-faint">No menu item matches “{menuQuery.trim()}”</p>
                 )}
                 <div className="space-y-0.5">
@@ -576,45 +574,9 @@ export function AppShell({
                     </Link>
                   )}
 
-                  {/* Reports: owners and admins only (the server refuses the report to everyone else) */}
-                  {isAdminRole(me.role) && showItem('Reports') && (
-                    <Link
-                      href="/reports"
-                      scroll={false}
-                      className={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold transition ${
-                        pathname === '/reports'
-                          ? 'bg-secondary text-on-primary shadow-2xs'
-                          : 'text-body hover:bg-surface-strong'
-                      }`}
-                    >
-                      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 3v18h18" />
-                        <path d="M7 15l4-4 4 4 5-6" />
-                      </svg>
-                      <span>Reports</span>
-                    </Link>
-                  )}
-
-                  {/* Conversation Reports: new customers in a date range, won and lost. Owners and admins only */}
-                  {isAdminRole(me.role) && showItem('Conversation Reports') && (
-                    <Link
-                      href="/conversation-reports"
-                      scroll={false}
-                      className={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs font-semibold transition ${
-                        pathname === '/conversation-reports'
-                          ? 'bg-secondary text-on-primary shadow-2xs'
-                          : 'text-body hover:bg-surface-strong'
-                      }`}
-                    >
-                      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 3v18h18" />
-                        <rect x="7" y="11" width="3" height="6" />
-                        <rect x="12" y="7" width="3" height="10" />
-                        <rect x="17" y="13" width="3" height="4" />
-                      </svg>
-                      <span>Conversation Reports</span>
-                    </Link>
-                  )}
+                  {/* Reports (owners and admins only; the server refuses the reports to everyone else): click it to show or
+                      hide Activity Reports and Conversation Reports */}
+                  {isAdminRole(me.role) && <ReportsMenu matches={showItem} searching={!!menuQuery.trim()} />}
 
                   {/* Future Contacts / Leads menus
                   <button
@@ -898,7 +860,7 @@ export function AppShell({
                   <Link
                     href="/reports"
                     scroll={false}
-                    title="Reports"
+                    title="Activity Reports"
                     className={`flex h-9 w-9 items-center justify-center rounded-xl transition ${
                       pathname === '/reports'
                         ? 'bg-secondary text-on-primary shadow-2xs'
@@ -927,6 +889,24 @@ export function AppShell({
                       <rect x="7" y="11" width="3" height="6" />
                       <rect x="12" y="7" width="3" height="10" />
                       <rect x="17" y="13" width="3" height="4" />
+                    </svg>
+                  </Link>
+                )}
+                {isAdminRole(me.role) && (
+                  <Link
+                    href="/contact-reports"
+                    scroll={false}
+                    title="Contact Reports"
+                    className={`flex h-9 w-9 items-center justify-center rounded-xl transition ${
+                      pathname === '/contact-reports'
+                        ? 'bg-secondary text-on-primary shadow-2xs'
+                        : 'text-faint hover:bg-surface-strong hover:text-body'
+                    }`}
+                  >
+                    <svg className="h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
                     </svg>
                   </Link>
                 )}
@@ -1003,7 +983,7 @@ export function AppShell({
 
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold tracking-tight text-ink">{pathname.startsWith('/contacts/') ? 'View contact details' : pathname.startsWith('/settings') ? 'Settings' : pathname === '/account' ? 'My account' : pathname === '/teams' ? 'Teams' : pathname === '/reports' ? 'Reports' : pathname === '/conversation-reports' ? 'Conversation Reports' : pathname === '/my-chats' ? 'My Chats' : pathname === '/collaborations' ? 'Collaborations' : pathname === '/mentions' ? 'Mentions' : pathname === '/leads' ? 'New Leads' : 'Inbox'}</h1>
+                <h1 className="text-base font-bold tracking-tight text-ink">{pathname.startsWith('/contacts/') ? 'View contact details' : pathname.startsWith('/settings') ? 'Settings' : pathname === '/account' ? 'My account' : pathname === '/teams' ? 'Teams' : pathname === '/reports' ? 'Activity Reports' : pathname === '/conversation-reports' ? 'Conversation Reports' : pathname === '/contact-reports' ? 'Contact Reports' : pathname === '/my-chats' ? 'My Chats' : pathname === '/collaborations' ? 'Collaborations' : pathname === '/mentions' ? 'Mentions' : pathname === '/leads' ? 'New Leads' : 'Inbox'}</h1>
                 {isConnected ? (
                   <span className="inline-flex shrink-0 items-center whitespace-nowrap gap-1 rounded-full border border-primary-soft-border bg-primary-soft px-2.5 py-0.5 text-[11px] font-semibold text-primary">
                     <span className="h-1.5 w-1.5 rounded-full bg-accent" />
@@ -1031,6 +1011,8 @@ export function AppShell({
                   ? 'Assignment report: who assigned which chat to whom, and why'
                   : pathname === '/conversation-reports'
                   ? 'New customers in the chosen dates, and how many were won or lost'
+                  : pathname === '/contact-reports'
+                  ? 'Customers with their status, labels and vehicles'
                   : pathname === '/my-chats'
                   ? 'Chats assigned to you or that you collaborate on'
                   : pathname === '/collaborations'
@@ -1155,6 +1137,9 @@ export function AppShell({
                 <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z" />
               </svg>
             </button> */}
+
+            {/* Reminders clock on every other page (the chat pages render theirs next to the bell, below) */}
+            {!CHAT_PAGES.includes(pathname) && <ReminderClock activeId={null} onSelect={(id) => openChatRef.current(id)} />}
 
             {/* Page-specific header controls (the inbox renders its Assign dropdown here) */}
             <div

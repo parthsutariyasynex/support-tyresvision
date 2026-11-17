@@ -27,16 +27,26 @@ export const refreshReminders = () => {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(REMINDERS_EVENT));
 };
 
-// While a clock is on screen, reminders go to it instead of popping up over the chat (pages without the clock,
-// e.g. Settings, still show the pop-up so nothing is missed)
-let clocks = 0;
-export const reminderClockMounted = () => clocks > 0;
-export function registerReminderClock() {
-  clocks++;
-  return () => {
-    clocks--;
-  };
-}
+// Live events that can change someone's list (a new chat or message, read, assigned / unassigned, closed or snoozed,
+// deleted, the workspace's reminder time, a reminder itself). Reminders are shown only in the clock, on every page,
+// never as pop-ups.
+export const REMINDER_TRIGGERS: ReadonlySet<string> = new Set([
+  'chat:new',
+  'conversation:started',
+  'message:new',
+  'conversation:unread',
+  'conversation:assigned',
+  'assignment:you',
+  'assignment:removed',
+  'assignment:changed',
+  'conversation:status',
+  'conversation:deleted',
+  'contact:deleted',
+  'contact:restored',
+  'member:removed',
+  'workspace:settings',
+  'assignment:reminder',
+]);
 
 // "Assigned to you · not opened yet" / "Assigned to you · 2 new messages" / "New chat · nobody has taken it"
 export function reminderReason(c: Pick<ReminderChat, 'kind' | 'notOpened' | 'unread'>) {

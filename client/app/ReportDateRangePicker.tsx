@@ -36,7 +36,18 @@ function viewFor(from: string, today: string): View {
 // be picked. Days are Dubai days (yyyy-mm-dd).
 // `preset`: the preset that produced `value`, when known (two presets can give the same days, e.g. "This week" and
 // "Month to date" when the month starts on a Sunday); the panel shows it instead of guessing.
-export function ReportDateRangePicker({ value, preset, onApply }: { value: Range; preset?: ReportPreset; onApply: (range: Range, preset: ReportPreset) => void }) {
+// `value` null (Contact Reports): no range yet; the button shows `emptyLabel` and the panel starts on the last 30 days.
+export function ReportDateRangePicker({
+  value,
+  preset,
+  onApply,
+  emptyLabel = 'All dates',
+}: {
+  value: Range | null;
+  preset?: ReportPreset;
+  onApply: (range: Range, preset: ReportPreset) => void;
+  emptyLabel?: string;
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -70,14 +81,14 @@ export function ReportDateRangePicker({ value, preset, onApply }: { value: Range
           <path d="M16 2v4M8 2v4M3 10h18" />
         </svg>
         <span className="tabular-nums">
-          {value.from === value.to ? longDay(value.from) : `${longDay(value.from)} – ${longDay(value.to)}`}
+          {!value ? emptyLabel : value.from === value.to ? longDay(value.from) : `${longDay(value.from)} – ${longDay(value.to)}`}
         </span>
       </button>
 
       {open && (
         <RangePanel
-          initial={value}
-          initialPreset={preset}
+          initial={value ?? reportPresetRange('last30')!}
+          initialPreset={value ? preset : 'last30'}
           onCancel={() => setOpen(false)}
           onApply={(r, p) => {
             setOpen(false);
