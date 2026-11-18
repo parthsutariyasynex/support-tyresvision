@@ -12,16 +12,22 @@ import { SearchSelect } from '../SearchSelect';
 // number has to be an approved template: the chat opens on "Send template".
 export function NewChatDialog({
   defaultCountry,
+  initialNumber,
   onDone,
   onClose,
 }: {
   defaultCountry: string;
+  // Opened from an inbox search for a number with no chat: that number, already filled in
+  initialNumber?: { country: string; national: string } | null;
   onDone: (conversation: Conversation, startedNow: boolean) => void;
   onClose: () => void;
 }) {
   const countries = useMemo(() => phoneCountries().map((c) => ({ value: c.code, label: `+${c.dial} ${c.name}`, flag: c.flag })), []);
-  const [country, setCountry] = useState<CountryCode>(() => (countries.some((c) => c.value === defaultCountry) ? defaultCountry : countries[0].value) as CountryCode);
-  const [number, setNumber] = useState('');
+  const prefill = initialNumber && countries.some((c) => c.value === initialNumber.country) ? initialNumber : null;
+  const [country, setCountry] = useState<CountryCode>(() =>
+    (prefill ? prefill.country : countries.some((c) => c.value === defaultCountry) ? defaultCountry : countries[0].value) as CountryCode,
+  );
+  const [number, setNumber] = useState(prefill?.national ?? '');
   const [name, setName] = useState('');
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);

@@ -103,6 +103,8 @@ import { dismissChatPopups } from '@/lib/messagePopups';
 import { isWindowClosedError, lastCustomerMessageAt, msUntilClose, windowOpen } from '@/lib/messagingWindow';
 import { OVERLAY_SELECTOR, type EscapeTarget, escapeClosesChat } from '@/lib/escapeToClose';
 import { NewChatDialog } from './NewChatDialog';
+import type { CountryCode } from 'libphonenumber-js';
+import { phoneFromSearch } from '@/lib/profileOptions';
 import { NoteBubble } from './NoteBubble';
 import { type MentionMember, MentionMenu } from './MentionMenu';
 import { insertMention, matchMembers, mentionAt } from '@/lib/mentions';
@@ -1403,6 +1405,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
         onLoadMoreHits={hits?.cursor ? loadMoreHits : undefined}
         onOpenHit={openHit}
         searchQuery={searchQuery}
+        chatsSettled={serverSearchedTerm === searchQuery.trim() && searchTerm === searchQuery.trim()}
         onSearchChange={setSearchQuery}
         filterType={filterType}
         onFilterChange={onFilterTypeChange}
@@ -1586,6 +1589,7 @@ function ConversationList({
   onLoadMoreHits,
   onOpenHit,
   searchQuery,
+  chatsSettled,
   sortOrder,
   onSortChange,
   statusFilter,
@@ -1647,6 +1651,9 @@ function ConversationList({
   onLoadMoreHits?: () => void;
   onOpenHit: (hit: MessageHit) => void;
   searchQuery: string;
+  // The server's chat list is for the text now in the search box (false for the moment after typing or clearing,
+  // while the list still holds the previous search's chats): the empty states wait for it, so they don't flash
+  chatsSettled: boolean;
   sortOrder: SortOrder;
   onSortChange: (s: SortOrder) => void;
   statusFilter: StatusFilter;
@@ -1705,7 +1712,13 @@ function ConversationList({
   const presence = usePresence(); // online / away / offline dots next to assignees
   // New chat (dialog): a new number gets a chat; a number that already has one opens it (never a second contact)
   const [newChatOpen, setNewChatOpen] = useState(false);
-  const newChat = () => setNewChatOpen(true);
+  // Searched for a number that has no chat: "Start a conversation" opens New chat with it filled in
+  const [newChatPrefill, setNewChatPrefill] = useState<{ country: string; national: string } | null>(null);
+  const newChat = () => {
+    setNewChatPrefill(null);
+    setNewChatOpen(true);
+  };
+  const searchedPhone = searching ? phoneFromSearch(searchQuery, defaultCountry as CountryCode) : null;
   function onNewChat(c: Conversation, startedNow: boolean) {
     setNewChatOpen(false);
     onRefresh();
@@ -1724,7 +1737,7 @@ function ConversationList({
 
   return (
     <section className="relative z-30 flex h-full min-h-0 w-72 sm:w-80 shrink-0 flex-col border-r border-line/90 bg-surface">
-      {newChatOpen && <NewChatDialog defaultCountry={defaultCountry} onDone={onNewChat} onClose={() => setNewChatOpen(false)} />}
+      {newChatOpen && <NewChatDialog defaultCountry={defaultCountry} initialNumber={newChatPrefill} onDone={onNewChat} onClose={() => setNewChatOpen(false)} />}
       {/* Top Header Metrics + Refresh Button */}
       <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-2 text-xs text-muted">
         <StatusMenu value={statusFilter} onChange={onStatusFilterChange} counts={statusCounts} />
@@ -1854,7 +1867,7 @@ function ConversationList({
               Retry
             </button>
           </div>
-        ) : conversations.length === 0 && searching ? null /* no chats: only the Messages section below (or "nothing found") */ : conversations.length === 0 && filterType !== 'all' ? (
+        ) : conversations.length === 0 && (searching || !chatsSettled) ? null /* searching with no chats: the Messages section and "Start a conversation" below; just cleared: the full list is on its way */ : conversations.length === 0 && filterType !== 'all' ? (
           <p className="p-5 text-xs leading-relaxed text-muted">No conversations match this filter.</p>
         ) : conversations.length === 0 && leads ? (
           <p className="p-5 text-xs leading-relaxed text-muted">
@@ -2090,6 +2103,22 @@ function ConversationList({
           <p className="p-5 text-xs leading-relaxed text-muted">
             No chats or messages found for &ldquo;{searchQuery.trim()}&rdquo;.
           </p>
+        )}
+        {/* Searched and no chat came up (e.g. a number nobody has chatted with yet): start one from here, with the
+            number filled in when the search is a phone number */}
+        {searching && chatsSettled && !hitsLoading && !conversationsError && conversations.length === 0 && (
+          <div className="px-5 pb-5 pt-1">
+            {!!hits?.items.length && <p className="pb-3 pt-3 text-xs leading-relaxed text-muted">No chats found for &ldquo;{searchQuery.trim()}&rdquo;.</p>}
+            <button
+              onClick={() => {
+                setNewChatPrefill(searchedPhone ? { country: searchedPhone.country, national: searchedPhone.national } : null);
+                setNewChatOpen(true);
+              }}
+              className="w-full rounded-lg bg-secondary py-2 px-3 text-xs font-semibold text-on-primary shadow-2xs hover:bg-secondary-hover transition flex items-center justify-center gap-1.5"
+            >
+              <span>+</span> Start a new conversation
+            </button>
+          </div>
         )}
       </div>
       {/* Sticky footer: how many contacts the current view, tab, search and filters match (all of them on the server,

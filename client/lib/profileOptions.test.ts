@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contactCountry, filterCountries, filterDialCountries, newChatNumber, filterTimeZones, flagOf, joinPhone, phoneCountries, splitPhone, timeZoneLabel, timeZoneOptions } from './profileOptions';
+import { contactCountry, filterCountries, filterDialCountries, newChatNumber, phoneFromSearch, filterTimeZones, flagOf, joinPhone, phoneCountries, splitPhone, timeZoneLabel, timeZoneOptions } from './profileOptions';
 
 test('country picker: flags, dial codes and names from the platform', () => {
   assert.equal(flagOf('AE'), '🇦🇪');
@@ -70,4 +70,14 @@ test('new chat number: country + number, or a pasted +international number; inva
   assert.deepEqual(newChatNumber('AE', ''), { problem: 'Enter the WhatsApp number' });
   assert.ok('problem' in newChatNumber('AE', '12345'));
   assert.ok('problem' in newChatNumber('IN', '0000000000'));
+});
+
+test('inbox search → Start a conversation: the searched text as a phone number', () => {
+  assert.deepEqual(phoneFromSearch('+971 55 264 7373', 'IN'), { country: 'AE', national: '552647373', label: '+971 55 264 7373' });
+  assert.equal(phoneFromSearch('971552647373', 'IN')?.country, 'AE');
+  assert.deepEqual(phoneFromSearch('055 264 7373', 'AE'), { country: 'AE', national: '552647373', label: '+971 55 264 7373' });
+  assert.equal(phoneFromSearch('9876543210', 'IN')?.label, '+91 98765 43210');
+  assert.equal(phoneFromSearch('Ahmed', 'AE'), null);
+  assert.equal(phoneFromSearch('2024', 'AE'), null);
+  assert.equal(phoneFromSearch('265/65R17', 'AE'), null);
 });
