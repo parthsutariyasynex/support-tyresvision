@@ -61,7 +61,7 @@ import { showsAssignCheckboxes } from '@/lib/roles';
 import { AppShell, OPEN_CHAT_EVENT } from '../AppShell';
 import { pinText, showToast } from '@/lib/toasts';
 import { CONTACT_LISTS_EVENT, CONTACT_REMARKS_EVENT, CONTACT_UPDATED_EVENT, ContactPanel } from './ContactPanel';
-import { EmojiPicker, FileSendDialog } from './composerExtras';
+import { EmojiPicker, FileSendDialog, SEND_FILES_MAX } from './composerExtras';
 import { FormatToolbar } from './FormatToolbar';
 import { ComposerHighlight } from './ComposerHighlight';
 import { resumeMyLiveLocations, setLive, startWatching, stopSharing, useMyActiveLives } from '@/lib/liveSharing';
@@ -2271,7 +2271,8 @@ function ChatPanel({
   const [text, setText] = useState('');
   // Emoji picker and image sending
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null); // the image or document about to be sent
+  const [sendFiles, setSendFiles] = useState<File[]>([]); // the images, videos or documents about to be sent (up to SEND_FILES_MAX)
+  const [pickNotice, setPickNotice] = useState(''); // why some chosen files were left out (over the limit, wrong type…), shown in the preview
   const [attachOpen, setAttachOpen] = useState(false); // 📎 menu: Photo, video or document / Location
   const [locationOpen, setLocationOpen] = useState(false);
   const attachRef = useRef<HTMLDivElement>(null);
@@ -2645,14 +2646,17 @@ function ChatPanel({
     });
   }
 
-  async function sendImageWithCaption(caption: string) {
-    if (!imageFile) return;
-    const m = await sendFile(conversation.id, imageFile, caption, replyTo?.id).catch((err) => {
+  // One of the chosen files, with its caption; the reply (if any) goes with the first one sent
+  // (read from a ref: the preview window sends one file after another without re-rendering in between)
+  const replyToRef = useRef(replyTo);
+  replyToRef.current = replyTo;
+  async function sendOneFile(file: File, caption: string) {
+    const m = await sendFile(conversation.id, file, caption, replyToRef.current?.id).catch((err) => {
       noteRefusal(err);
       throw err;
     });
     onSent(m);
-    setImageFile(null);
+    replyToRef.current = null;
     setReplyTo(null);
   }
 
@@ -2667,13 +2671,25 @@ function ChatPanel({
   }
 
   // A chosen or dropped file: checked first (type, size), then the preview window
-  function pickFile(f: File | undefined, many = false) {
-    if (!f) return;
+  // Chosen, dropped or pasted files: each checked (type, size), then added to the preview window (up to
+  // SEND_FILES_MAX; a file that can't be sent is left out and says why)
+  function pickFiles(list: File[]) {
+    if (!list.length) return;
     if (windowClosed) return setError('24-hour window closed: only approved templates can be sent until the customer writes again.');
-    const r = checkFile(f, { video: true });
-    if ('problem' in r) return setError(r.problem);
-    setError(many ? 'One file at a time: sending the first one.' : '');
-    setImageFile(f);
+    const problems: string[] = [];
+    const ok: File[] = [];
+    for (const f of list) {
+      const r = checkFile(f, { video: true });
+      if ('problem' in r) problems.push(list.length > 1 ? `${f.name}: ${r.problem}` : r.problem);
+      else ok.push(f);
+    }
+    const room = Math.max(SEND_FILES_MAX - sendFiles.length, 0);
+    if (ok.length > room) problems.push(`You can send up to ${SEND_FILES_MAX} files at a time: ${ok.length - room} ${ok.length - room === 1 ? 'was' : 'were'} left out.`);
+    const willShow = sendFiles.length > 0 || (room > 0 && ok.length > 0);
+    // Shown in the preview window at once when it is (or is about to be) open; otherwise under the message box
+    setPickNotice(willShow ? problems.join(' ') : '');
+    setError(willShow ? '' : problems.join(' '));
+    if (room > 0 && ok.length) setSendFiles((prev) => [...prev, ...ok].slice(0, SEND_FILES_MAX));
   }
   // Files can be sent (and dropped) only where the message box is: an open chat you may reply in
   const canAttach = !isClosed && !windowClosed && !editing && !(!conversation.assignee && viewer?.role !== 'supervisor' && !viewer?.isAdmin);
@@ -3079,8 +3095,7 @@ function ChatPanel({
         dragDepth.current = 0;
         setDragging(false);
         if (!canAttach) return setError(isClosed ? 'This chat is closed. Reopen it to send files.' : windowClosed ? '24-hour window closed: only approved templates can be sent until the customer writes again.' : 'Assign this chat to yourself before sending files (New Leads → Assign to Me).');
-        const files = e.dataTransfer.files;
-        pickFile(files[0], files.length > 1);
+        pickFiles([...e.dataTransfer.files]);
       }}
       // A pasted screenshot or copied file (⌘V / Ctrl+V in the message box or anywhere in the chat) opens the same
       // preview as a chosen file; pasted text is left to the box as usual
@@ -3095,8 +3110,8 @@ function ChatPanel({
             .catch((err) => setError((err as Error).message));
         if (!canAttach) return setError(isClosed ? 'This chat is closed. Reopen it to send files.' : windowClosed ? '24-hour window closed: only approved templates can be sent until the customer writes again.' : 'Assign this chat to yourself before sending files (New Leads → Assign to Me).');
         // An image over 5 MB is made smaller first (as a JPEG), so it can still be sent
-        fitPastedImage(pastedName(files[0]))
-          .then((f) => pickFile(f, files.length > 1))
+        Promise.all(files.map((f) => fitPastedImage(pastedName(f))))
+          .then(pickFiles)
           .catch((err) => setError((err as Error).message));
       }}
     >
@@ -3765,13 +3780,14 @@ function ChatPanel({
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             accept={CHAT_ACCEPT}
             className="hidden"
-            aria-label="Choose a file"
+            aria-label="Choose files"
             onChange={(e) => {
-              const f = e.target.files?.[0];
+              const chosen = [...(e.target.files ?? [])];
               e.target.value = ''; // the same file can be chosen again
-              pickFile(f);
+              pickFiles(chosen);
             }}
           />
           {noting && (
@@ -3991,7 +4007,23 @@ function ChatPanel({
         )}
         </>
         ))}
-        {imageFile && <FileSendDialog file={imageFile} onSend={sendImageWithCaption} onClose={() => setImageFile(null)} />}
+        {sendFiles.length > 0 && (
+          <FileSendDialog
+            files={sendFiles}
+            onSend={sendOneFile}
+            onSent={(f) => setSendFiles((prev) => prev.filter((x) => x !== f))}
+            onRemove={(f) => {
+              setPickNotice('');
+              setSendFiles((prev) => prev.filter((x) => x !== f));
+            }}
+            onAddMore={() => fileInputRef.current?.click()}
+            notice={pickNotice}
+            onClose={() => {
+              setPickNotice('');
+              setSendFiles([]);
+            }}
+          />
+        )}
         {locationOpen && (
           <LocationDialog
             conversationId={conversation.id}
