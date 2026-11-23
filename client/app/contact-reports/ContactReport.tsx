@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { type ReportPreset, longDay } from '@/lib/reportRange';
 import { type ContactReport as Report, NO_STAGE, dayEndIso, dayStartIso, downloadContactReportCsv, fetchContactReport } from '@/lib/reports';
 import { revalidateOnReturn } from '@/lib/revalidate';
-import { dayKey } from '@/lib/time';
+import { dayKey, formatTime } from '@/lib/time';
 import { CountryFilter } from '../conversation-reports/CountryFilter';
 import { ReportDateRangePicker } from '../ReportDateRangePicker';
 import { CheckMenu } from './CheckMenu';
@@ -118,7 +118,7 @@ export function ContactReport() {
     <div className="space-y-6">
       {/* Header: title, country, contacted dates, refresh */}
       <section className="rounded-2xl border border-line bg-surface p-5 shadow-xs sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-soft text-primary">
@@ -132,7 +132,7 @@ export function ContactReport() {
             </div>
             <p className="mt-1 text-xs text-muted">Your customers with their status, labels and vehicles. Click a name to open the chat.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2.5 lg:shrink-0 lg:flex-nowrap">
+          <div className="flex flex-wrap items-center gap-2.5 xl:shrink-0 xl:flex-nowrap">
             <CountryFilter value={countries} onChange={setCountries} />
             <ReportDateRangePicker
               value={range}
@@ -192,13 +192,14 @@ export function ContactReport() {
         </div>
 
         {/* Filters */}
-        <div className="mt-5 grid grid-cols-1 gap-2.5 border-t border-line-soft pt-5 sm:grid-cols-2 lg:grid-cols-6">
-          <div className="relative lg:col-span-2">
+        {/* One row on wide screens (search a little wider), three per row on laptops, two on tablets */}
+        <div className="mt-5 grid grid-cols-1 gap-2.5 border-t border-line-soft pt-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[1.5fr_repeat(5,minmax(0,1fr))]">
+          <div className="relative">
             <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
             </svg>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search customer name or number" aria-label="Search customer name or number" maxLength={100} className={`${input} pl-8`} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or number" aria-label="Search customer name or number" maxLength={100} className={`${input} pl-8`} />
           </div>
           <CheckMenu
             label="Status"
@@ -234,14 +235,14 @@ export function ContactReport() {
             ))}
           </select>
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model" aria-label="Vehicle model" maxLength={60} className={input} />
-          <input value={tyreSize} onChange={(e) => setTyreSize(e.target.value)} placeholder="Tyre size, e.g. 265/65R17" aria-label="Tyre size" maxLength={30} className={`${input} lg:col-span-2`} />
-          <div className="flex items-center gap-3 sm:col-span-2 lg:col-span-4 lg:justify-end">
-            {filtered && (
+          <input value={tyreSize} onChange={(e) => setTyreSize(e.target.value)} placeholder="Tyre size" title="Tyre size 1 or 2, e.g. 265/65R17 or just 265/65" aria-label="Tyre size" maxLength={30} className={input} />
+          {filtered && (
+            <div className="col-span-full flex justify-end">
               <button type="button" onClick={clearAll} className="text-xs font-semibold text-primary hover:underline">
                 Clear all filters
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -322,7 +323,11 @@ export function ContactReport() {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-body tabular-nums">+{c.waId}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-body">{longDay(dayKey(c.createdAt))}</td>
+                    {/* Date and time the customer was added (Dubai time, like the rest of the app) */}
+                    <td className="whitespace-nowrap px-3 py-3 text-body">
+                      {longDay(dayKey(c.createdAt))}
+                      <span className="ml-1.5 text-muted tabular-nums">{formatTime(c.createdAt, 'en-US')}</span>
+                    </td>
                     <td className="px-3 py-3">
                       {c.stageLabel ? (
                         <span
