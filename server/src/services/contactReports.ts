@@ -1,6 +1,8 @@
 import type { Prisma } from '@prisma/client';
 import type { AuthPayload } from '../auth.js';
 import { prisma } from '../prisma.js';
+import { dubaiIso } from '../time.js';
+import { csvCell } from './assignmentReports.js';
 import { countryWhere } from './conversationReports.js';
 import { AppError } from './errors.js';
 import { listLeadStages } from './leadStages.js';
@@ -47,13 +49,11 @@ const validDate = (d: Date | null | undefined, name: string) => {
   return d;
 };
 
-export async function contactReport(auth: AuthPayload, filter: ContactReportFilter) {
-  await requireAdmin(auth);
+// The filters as a database query (shared by the page and the CSV export)
+function contactWhere(auth: AuthPayload, filter: ContactReportFilter): Prisma.ContactWhereInput {
   const from = validDate(filter.from, 'from');
   const to = validDate(filter.to, 'to');
   if (from && to && from > to) throw new AppError('"from" must be before "to"', 400, 'BAD_USER_INPUT');
-  const pageSize = Math.min(Math.max(Math.trunc(filter.pageSize ?? 25), 1), CONTACT_REPORT_MAX_PAGE_SIZE);
-  const page = Math.max(Math.trunc(filter.page ?? 1), 1);
   const search = text(filter.search);
   const make = text(filter.make, 60);
   const model = text(filter.model, 60);
@@ -85,49 +85,41 @@ export async function contactReport(auth: AuthPayload, filter: ContactReportFilt
   if (tyreSize) vehicle.push({ OR: [{ tireSize1: { contains: tyreSize } }, { tireSize2: { contains: tyreSize } }] });
   if (vehicle.length) and.push({ vehicles: { some: { deletedAt: null, AND: vehicle } } });
 
-  const where: Prisma.ContactWhereInput = { workspaceId: auth.workspaceId, deletedAt: null, AND: and };
+  return { workspaceId: auth.workspaceId, deletedAt: null, AND: and };
+}
 
-  const [total, rows, stages, labels, makes] = await Promise.all([
-    prisma.contact.count({ where }),
-    prisma.contact.findMany({
-      where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      select: {
-        id: true,
-        name: true,
-        firstName: true,
-        lastName: true,
-        waId: true,
-        leadStage: true,
-        createdAt: true,
-        // The customer's chat (the latest one, if somehow more than one): opened from the report, and its labels
-        conversations: {
-          orderBy: { lastMessageAt: 'desc' },
-          take: 1,
-          select: { id: true, labels: { select: { label: { select: { id: true, name: true, color: true, deletedAt: true } } } } },
-        },
-        vehicles: {
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'asc' },
-          select: { make: true, model: true, year: true, tireSize1: true, tireSize2: true },
-        },
+type Stage = Awaited<ReturnType<typeof listLeadStages>>[number];
+
+// One page of customers (newest first), with their stage, the latest chat's labels and their vehicles
+async function contactRows(where: Prisma.ContactWhereInput, skip: number, take: number, stages: Stage[]) {
+  const rows = await prisma.contact.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    skip,
+    take,
+    select: {
+      id: true,
+      name: true,
+      firstName: true,
+      lastName: true,
+      waId: true,
+      leadStage: true,
+      createdAt: true,
+      // The customer's chat (the latest one, if somehow more than one): opened from the report, and its labels
+      conversations: {
+        orderBy: { lastMessageAt: 'desc' },
+        take: 1,
+        select: { id: true, labels: { select: { label: { select: { id: true, name: true, color: true, deletedAt: true } } } } },
       },
-    }),
-    listLeadStages(auth.workspaceId),
-    prisma.label.findMany({ where: { workspaceId: auth.workspaceId, deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true, color: true } }),
-    prisma.vehicle.findMany({
-      where: { workspaceId: auth.workspaceId, deletedAt: null, make: { not: null }, contact: { deletedAt: null } },
-      distinct: ['make'],
-      orderBy: { make: 'asc' },
-      select: { make: true },
-      take: 500,
-    }),
-  ]);
-
+      vehicles: {
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+        select: { make: true, model: true, year: true, tireSize1: true, tireSize2: true },
+      },
+    },
+  });
   const byStage = new Map(stages.map((s) => [s.value, s]));
-  const contacts = rows.map((c) => {
+  return rows.map((c) => {
     const stage = c.leadStage ? byStage.get(c.leadStage) : undefined;
     const chat = c.conversations[0];
     return {
@@ -143,6 +135,27 @@ export async function contactReport(auth: AuthPayload, filter: ContactReportFilt
       vehicles: c.vehicles,
     };
   });
+}
+
+export async function contactReport(auth: AuthPayload, filter: ContactReportFilter) {
+  await requireAdmin(auth);
+  const where = contactWhere(auth, filter);
+  const pageSize = Math.min(Math.max(Math.trunc(filter.pageSize ?? 25), 1), CONTACT_REPORT_MAX_PAGE_SIZE);
+  const page = Math.max(Math.trunc(filter.page ?? 1), 1);
+  const stages = await listLeadStages(auth.workspaceId);
+
+  const [total, contacts, labels, makes] = await Promise.all([
+    prisma.contact.count({ where }),
+    contactRows(where, (page - 1) * pageSize, pageSize, stages),
+    prisma.label.findMany({ where: { workspaceId: auth.workspaceId, deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true, color: true } }),
+    prisma.vehicle.findMany({
+      where: { workspaceId: auth.workspaceId, deletedAt: null, make: { not: null }, contact: { deletedAt: null } },
+      distinct: ['make'],
+      orderBy: { make: 'asc' },
+      select: { make: true },
+      take: 500,
+    }),
+  ]);
 
   return {
     total,
@@ -154,4 +167,45 @@ export async function contactReport(auth: AuthPayload, filter: ContactReportFilt
     labels,
     makes: [...new Set(makes.map((m) => m.make!.trim()).filter(Boolean))],
   };
+}
+
+// Export CSV: every customer the filters match (not only the page on screen), newest first, one row per customer.
+// A customer with several vehicles has them in the same order in each vehicle column, separated by " | ".
+export const CONTACT_REPORT_CSV_MAX_ROWS = 50000;
+const CONTACT_CSV_COLUMNS = ['Customer name', 'Customer number', 'Contacted date (Dubai time)', 'Status', 'Labels', 'Tyre size 1', 'Tyre size 2', 'Make', 'Model', 'Year'];
+
+export async function contactReportCsv(auth: AuthPayload, filter: ContactReportFilter) {
+  await requireAdmin(auth);
+  const where = contactWhere(auth, filter);
+  const stages = await listLeadStages(auth.workspaceId);
+  const lines = [CONTACT_CSV_COLUMNS.map(csvCell).join(',')];
+  const batch = 1000;
+  for (let skip = 0; skip < CONTACT_REPORT_CSV_MAX_ROWS; skip += batch) {
+    const rows = await contactRows(where, skip, Math.min(batch, CONTACT_REPORT_CSV_MAX_ROWS - skip), stages);
+    for (const c of rows) {
+      // Empty when no vehicle has it; "—" holds the place of a vehicle without it so the columns still line up
+      const v = (pick: (x: (typeof c.vehicles)[number]) => string | number | null | undefined) => {
+        const values = c.vehicles.map((x) => (pick(x) ?? '').toString().trim());
+        return values.some(Boolean) ? values.map((s) => s || '—').join(' | ') : '';
+      };
+      lines.push(
+        [
+          c.name ?? '',
+          c.waId, // digits with country code, as in the assignment export (a leading + would make spreadsheets read a formula)
+          dubaiIso(c.createdAt).slice(0, 16).replace('T', ' '),
+          c.stageLabel ?? '',
+          c.labels.map((l) => l.name).join(', '),
+          v((x) => x.tireSize1),
+          v((x) => x.tireSize2),
+          v((x) => x.make),
+          v((x) => x.model),
+          v((x) => x.year),
+        ]
+          .map(csvCell)
+          .join(','),
+      );
+    }
+    if (rows.length < batch) break;
+  }
+  return `﻿${lines.join('\r\n')}\r\n`; // BOM so Excel opens UTF-8 names correctly
 }

@@ -44,8 +44,13 @@ export async function downloadAssignmentReportCsv(range: ReportRange = {}) {
   if (range.from) params.set('from', range.from);
   if (range.to) params.set('to', range.to);
   if (range.conversationId) params.set('conversationId', range.conversationId);
+  return downloadCsv('assignments.csv', params, 'assignment-report.csv');
+}
+
+// GET /reports/<file>?<params> with the signed-in user's token, saved as the file the server names
+async function downloadCsv(file: string, params: URLSearchParams, fallbackName: string) {
   const token = getToken();
-  const res = await fetch(`${API_URL}/reports/assignments.csv${params.size ? `?${params}` : ''}`, {
+  const res = await fetch(`${API_URL}/reports/${file}${params.size ? `?${params}` : ''}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) {
@@ -53,7 +58,7 @@ export async function downloadAssignmentReportCsv(range: ReportRange = {}) {
     throw new Error(data.error ?? `Export failed (${res.status})`);
   }
   const blob = await res.blob();
-  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'assignment-report.csv';
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? fallbackName;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -186,4 +191,22 @@ export async function fetchContactReport(f: ContactReportFilter) {
       pageSize: f.pageSize ?? 25,
     })
   ).contactReport;
+}
+
+// Contact Reports → Export CSV (GET /reports/contacts.csv): every customer the filters match, not only this page
+export function downloadContactReportCsv(f: ContactReportFilter) {
+  const params = new URLSearchParams();
+  const set = (key: string, value: string | null | undefined) => {
+    if (value?.trim()) params.set(key, value.trim());
+  };
+  set('search', f.search);
+  set('from', f.from);
+  set('to', f.to);
+  set('countries', f.countries?.join(','));
+  set('stages', f.stages?.join(','));
+  set('labelIds', f.labelIds?.join(','));
+  set('make', f.make);
+  set('model', f.model);
+  set('tyreSize', f.tyreSize);
+  return downloadCsv('contacts.csv', params, 'contact-report.csv');
 }

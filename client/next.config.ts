@@ -31,7 +31,7 @@ const nextConfig: NextConfig = {
   // couldn't load"), and a private page skipped the sign-in check in proxy.ts. Pages are never stored by a shared
   // cache now; the hashed /_next/static files still are (Next.js marks those immutable itself).
   async headers() {
-    const pages = ['/', '/login', '/register', '/forgot-password', '/reset-password', '/inbox', '/my-chats', '/leads', '/mentions', '/collaborations', '/contacts/:id', '/reports', '/teams', '/account', '/settings', '/settings/:path*'];
+    const pages = ['/', '/login', '/register', '/forgot-password', '/reset-password', '/inbox', '/my-chats', '/leads', '/mentions', '/collaborations', '/contacts/:id', '/reports', '/conversation-reports', '/contact-reports', '/teams', '/account', '/settings', '/settings/:path*'];
     return pages.map((source) => ({ source, headers: [{ key: 'Cache-Control', value: 'private, no-cache, no-store, max-age=0, must-revalidate' }] }));
   },
   async rewrites() {

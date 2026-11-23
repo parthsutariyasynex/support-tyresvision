@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type ReportPreset, longDay } from '@/lib/reportRange';
-import { type ContactReport as Report, NO_STAGE, dayEndIso, dayStartIso, fetchContactReport } from '@/lib/reports';
+import { type ContactReport as Report, NO_STAGE, dayEndIso, dayStartIso, downloadContactReportCsv, fetchContactReport } from '@/lib/reports';
 import { revalidateOnReturn } from '@/lib/revalidate';
 import { dayKey } from '@/lib/time';
 import { CountryFilter } from '../conversation-reports/CountryFilter';
@@ -68,6 +68,28 @@ export function ContactReport() {
     load();
     return revalidateOnReturn(load);
   }, [load]);
+
+  // Export CSV: the same filters as the list on screen
+  const [exporting, setExporting] = useState(false);
+  async function exportCsv() {
+    setExporting(true);
+    setError('');
+    try {
+      await downloadContactReportCsv({
+        ...typed,
+        from: range ? dayStartIso(range.from) : null,
+        to: range ? dayEndIso(range.to) : null,
+        countries,
+        stages,
+        labelIds,
+        make,
+      });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   // A new filter starts again on page 1
   useEffect(() => setPage(1), [typed, range, countries, stages, labelIds, make]);
@@ -151,6 +173,20 @@ export function ContactReport() {
                 <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
                 <path d="M16 21h5v-5" />
               </svg>
+            </button>
+            {/* Every customer the filters match (not only this page), as a spreadsheet */}
+            <button
+              type="button"
+              disabled={exporting || !report?.total}
+              onClick={exportCsv}
+              className="flex h-[34px] shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-xs font-semibold text-on-primary shadow-2xs transition hover:bg-primary-hover disabled:opacity-50"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>{exporting ? 'Exporting…' : 'Export CSV'}</span>
             </button>
           </div>
         </div>
