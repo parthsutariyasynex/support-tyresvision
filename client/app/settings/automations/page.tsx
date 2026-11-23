@@ -121,7 +121,7 @@ function Automations({ me }: { me: Me }) {
   }, [admin, router]);
   if (!admin) return null;
   if (!saved || !form)
-    return error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p> : <div className="h-96 max-w-4xl animate-pulse rounded-xl bg-surface-strong" aria-busy="true" />;
+    return error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p> : <div className="h-96 w-full animate-pulse rounded-xl bg-surface-strong" aria-busy="true" />;
 
   const set = <K extends keyof Editable>(k: K, v: Editable[K]) => setForm((f) => ({ ...f!, [k]: v }));
   const changed = EDITABLE.filter((k) => !same(form[k], saved[k]));
@@ -153,7 +153,7 @@ function Automations({ me }: { me: Me }) {
 
   return (
     <>
-      <div className="max-w-4xl">
+      <div className="w-full">
         <h2 className="text-xl font-bold text-ink">Simple automations</h2>
         <p className="mt-1 text-[13px] text-body-soft">Set up auto-replies and conversation routing from one place</p>
 

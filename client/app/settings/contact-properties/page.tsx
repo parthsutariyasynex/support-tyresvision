@@ -107,7 +107,7 @@ function Manage({ isAdmin }: { isAdmin: boolean }) {
   }
 
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <div role="tablist" aria-label="Property views" className="flex gap-1 border-b border-line">
         {(['default', 'personal'] as const).map((t) => (
           <button

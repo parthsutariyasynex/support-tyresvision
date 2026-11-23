@@ -23,7 +23,7 @@ function ContactReports({ me }: { me: Me }) {
 
   return (
     <div className="h-full overflow-y-auto bg-page/40 p-4 sm:p-6 lg:p-8" style={{ scrollbarGutter: 'stable' }}>
-      <div className="mx-auto w-full max-w-7xl">
+      <div className="w-full">
         <ContactReport />
       </div>
     </div>

@@ -44,7 +44,7 @@ function General({ me }: { me: Me }) {
     if (t === 'password') setTimeout(() => document.getElementById('password')?.scrollIntoView({ block: 'start' }), 300);
   }, []);
   return (
-    <div className="w-full max-w-3xl">
+    <div className="w-full">
       <div role="tablist" aria-label="General" className="flex gap-1 border-b border-line">
         {(['profile', 'system'] as const).map((t) => (
           <button
@@ -143,7 +143,8 @@ function Profile({ me }: { me: Me }) {
 
       <form onSubmit={save} className="mt-6">
         <h3 className="text-lg font-bold text-ink">Personal info</h3>
-        <div className="mt-4 grid gap-x-4 gap-y-5 sm:grid-cols-2">
+        {/* Two fields per row, three on wide screens, so no box stretches across the whole page */}
+        <div className="mt-4 grid gap-x-4 gap-y-5 sm:grid-cols-2 xl:grid-cols-3">
           <div>
             {label('First name', 'first-name')}
             <input id="first-name" value={first} onChange={(e) => setFirst(e.target.value)} maxLength={100} autoComplete="given-name" className={inputClass} />
@@ -152,13 +153,13 @@ function Profile({ me }: { me: Me }) {
             {label('Last name', 'last-name')}
             <input id="last-name" value={last} onChange={(e) => setLast(e.target.value)} maxLength={90} autoComplete="family-name" className={inputClass} />
           </div>
-          <div className="sm:col-span-2">
+          <div>
             {label('Email')}
             <p className={readOnlyClass} title="Your sign-in email can't be changed here">
               {me.user.email}
             </p>
           </div>
-          <div className="sm:col-span-2">
+          <div>
             {label('Phone number', 'phone')}
             <div className="flex gap-2">
               <CountryPicker value={country} onChange={setCountry} />
@@ -174,11 +175,11 @@ function Profile({ me }: { me: Me }) {
               />
             </div>
           </div>
-          <div className="sm:col-span-2">
+          <div>
             {label('Username', undefined, "You sign in with your email, so it is your username. It can't be changed here.")}
             <p className={readOnlyClass}>{me.user.email}</p>
           </div>
-          <div className="sm:col-span-2">
+          <div>
             {label('Job title', 'job-title', 'Your role in the team, e.g. Support lead')}
             <input id="job-title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} maxLength={100} autoComplete="organization-title" className={inputClass} />
           </div>
@@ -383,12 +384,15 @@ function TimeZoneSection() {
   return (
     <section className={sectionClass}>
       <h3 className="text-lg font-bold text-ink">System preference</h3>
-      <div className="mt-4">
-        {label('Time zone', 'time-zone', 'Dates and times in chats, reports and reminders are shown in this time zone')}
-        <p id="time-zone" className={readOnlyClass}>
-          {timeZoneLabel(APP_TIME_ZONE)}
-        </p>
-        <p className="mt-1.5 text-[11px] text-faint">All dates and times in the app are shown in Dubai time, whatever this device&apos;s time zone is.</p>
+      {/* As wide as one field of Personal info above, not the whole page */}
+      <div className="mt-4 grid gap-x-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div>
+          {label('Time zone', 'time-zone', 'Dates and times in chats, reports and reminders are shown in this time zone')}
+          <p id="time-zone" className={readOnlyClass}>
+            {timeZoneLabel(APP_TIME_ZONE)}
+          </p>
+        </div>
+        <p className="col-span-full mt-1.5 text-[11px] text-faint">All dates and times in the app are shown in Dubai time, whatever this device&apos;s time zone is.</p>
       </div>
     </section>
   );

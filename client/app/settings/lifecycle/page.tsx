@@ -176,7 +176,7 @@ function Lifecycle({ isAdmin }: { isAdmin: boolean }) {
   );
 
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <h2 className="text-xl font-bold text-ink">
         Manage customer lifecycle stages
       </h2>

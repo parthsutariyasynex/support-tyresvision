@@ -62,7 +62,7 @@ function Deleted({ me }: { me: Me }) {
   const name = (c: DeletedContact) => profileName(c);
 
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <p className="text-[13px] text-body-soft">
         {days === null ? '…' : `Contacts will be permanently deleted and unable to be restored after ${days} days since their initial deletion have passed.`}
       </p>

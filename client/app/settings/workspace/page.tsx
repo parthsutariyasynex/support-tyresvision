@@ -87,7 +87,9 @@ function Preferences({ me }: { me: Me }) {
   );
 
   return (
-    <form onSubmit={save} className="max-w-3xl">
+    <form onSubmit={save} className="w-full">
+      {/* The sections side by side on wide screens (two, then three across), stacked on narrow ones */}
+      <div className="grid items-start gap-6 xl:grid-cols-2 2xl:grid-cols-3">
       <Section title="Regional defaults" text="Used for everyone in this workspace unless they choose otherwise.">
         <Field label="Time zone" htmlFor="ws-tz" hint="All dates and times (chats, reports, reminders, automation working hours) are shown in Dubai time.">
           <p id="ws-tz" className="rounded-lg border border-line bg-surface-muted px-3 py-2 text-[13px] text-ink">
@@ -133,6 +135,7 @@ function Preferences({ me }: { me: Me }) {
           {num('deletedContactRetentionDays', 1, 90, 'days')}
         </Field>
       </Section>
+      </div>
 
       {error && <p className="mt-4 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p>}
       <div className="sticky bottom-0 mt-6 flex items-center justify-end gap-2 border-t border-line bg-page py-4">
@@ -150,7 +153,7 @@ function Preferences({ me }: { me: Me }) {
 
 function Section({ title, text, children }: { title: string; text: string; children: React.ReactNode }) {
   return (
-    <section className="mb-6 rounded-xl border border-line bg-surface p-6">
+    <section className="rounded-xl border border-line bg-surface p-6">
       <h3 className="text-[15px] font-bold text-ink">{title}</h3>
       <p className="mt-1 text-[12px] text-muted">{text}</p>
       <div className="mt-5 space-y-5">{children}</div>
@@ -173,7 +176,7 @@ function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: str
 // Same shape as the form while it loads, so nothing jumps when the values arrive
 function PageSkeleton() {
   return (
-    <div className="max-w-3xl space-y-6" aria-busy="true" aria-label="Loading">
+    <div className="grid w-full items-start gap-6 xl:grid-cols-2 2xl:grid-cols-3" aria-busy="true" aria-label="Loading">
       {[3, 2, 1].map((n) => (
         <div key={n} className="rounded-xl border border-line bg-surface p-6">
           <div className="h-4 w-40 animate-pulse rounded bg-surface-strong" />

@@ -100,7 +100,7 @@ function Company({ me }: { me: Me }) {
 
   return (
     <>
-      <div className="max-w-4xl">
+      <div className="w-full">
         <div className="flex gap-6 border-b border-line" role="tablist">
           {(
             [

@@ -28,7 +28,7 @@ function Users({ me }: { me: Me }) {
   }, [admin, router]);
   if (!admin) return null;
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <TeamSection meId={me.user.id} role={me.role} />
     </div>
   );

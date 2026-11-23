@@ -28,7 +28,7 @@ function Reports({ me }: { me: Me }) {
   }, [admin, router]);
   if (!admin) return null;
   return (
-    <div className="max-w-6xl space-y-6">
+    <div className="w-full space-y-6">
       <AssignmentReport />
     </div>
   );

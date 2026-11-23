@@ -128,7 +128,7 @@ function Qr({ me }: { me: Me }) {
   ];
 
   return (
-    <div className="max-w-5xl">
+    <div className="w-full">
       <section className={`${card} !p-6`}>
         <div className="inline-flex items-center gap-3 rounded-xl border border-line px-4 py-3">
           <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-success-soft text-success">
