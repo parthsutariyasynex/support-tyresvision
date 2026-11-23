@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CAPTION_MAX, checkFile, documentLabel, downloadFile, formatSize, mediaUrl } from '@/lib/media';
 import { overLimit, tooLongText } from '@/lib/textLimits';
+import { ImageViewer } from './ImageGallery';
 import { ZoomableImage } from './ZoomableImage';
 
 // The full Unicode emoji set (emoji-picker-react): search, categories, skin tones and recently used (kept in this
@@ -358,17 +359,8 @@ export function ChatImage({ messageId }: { messageId: string }) {
       <button type="button" onClick={() => setFull(true)} title="View full size" className="block overflow-hidden rounded-lg">
         <img src={src} alt="Image" className="max-h-64 max-w-[260px] object-cover" />
       </button>
-      {full &&
-        createPortal(
-          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/80 p-6" role="dialog" aria-label="Image">
-            {/* Zoom with the wheel, a pinch or a double-click/tap; a click beside the picture closes */}
-            <ZoomableImage src={src} alt="Image, full size" onBackdropClick={() => setFull(false)} />
-            <button type="button" onClick={() => setFull(false)} aria-label="Close" className="absolute right-5 top-5 z-10 rounded-full bg-ink/70 px-3 py-1.5 text-sm text-on-primary shadow-lg hover:bg-ink/90">
-              ✕
-            </button>
-          </div>,
-          document.body,
-        )}
+      {/* Full size, with the chat's other photos below and ‹ › to go through them (ImageGallery.tsx) */}
+      {full && <ImageViewer startId={messageId} onClose={() => setFull(false)} />}
     </>
   );
 }

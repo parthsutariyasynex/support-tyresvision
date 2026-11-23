@@ -62,6 +62,7 @@ import { AppShell, OPEN_CHAT_EVENT } from '../AppShell';
 import { pinText, showToast } from '@/lib/toasts';
 import { CONTACT_LISTS_EVENT, CONTACT_REMARKS_EVENT, CONTACT_UPDATED_EVENT, ContactPanel } from './ContactPanel';
 import { EmojiPicker, FileSendDialog, SEND_FILES_MAX } from './composerExtras';
+import { ImageGalleryContext, galleryItems } from './ImageGallery';
 import { FormatToolbar } from './FormatToolbar';
 import { ComposerHighlight } from './ComposerHighlight';
 import { resumeMyLiveLocations, setLive, startWatching, stopSharing, useMyActiveLives } from '@/lib/liveSharing';
@@ -2900,6 +2901,8 @@ function ChatPanel({
   // Messages, activity and internal notes in time order. While older messages aren't loaded yet, skip activity and
   // notes older than the first loaded message so they don't pile up at the top.
   const oldestLoaded = onLoadOlder && messages[0] ? messages[0].createdAt : null;
+  // Every photo in this chat, oldest first: the full-size viewer goes through them
+  const gallery = useMemo(() => galleryItems(messages, contactDisplayName(conversation.contact)), [messages, conversation.contact]);
   const stream = [
     ...messages.map((m) => ({ kind: 'message' as const, at: m.createdAt, id: m.id, m })),
     ...activity
@@ -3353,6 +3356,8 @@ function ChatPanel({
             </button>
           </div>
         )}
+        {/* A photo opened full size can go through every photo in this chat (ImageGallery.tsx) */}
+        <ImageGalleryContext.Provider value={gallery}>
         {stream.map((item, i) => {
           // WhatsApp-style day separator (Today / Yesterday / date, in the app time zone) where the day changes
           const day = dayKey(item.at);
@@ -3400,6 +3405,7 @@ function ChatPanel({
             </Fragment>
           );
         })}
+        </ImageGalleryContext.Provider>
         {/* Replies on their way (or that failed before being saved), after the saved messages */}
         {pendingIn(pending, conversation.id).map((p) => (
           <div key={p.requestId} className="flex justify-end" data-pending-send={p.state}>
