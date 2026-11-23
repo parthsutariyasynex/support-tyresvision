@@ -63,6 +63,7 @@ import { pinText, showToast } from '@/lib/toasts';
 import { CONTACT_LISTS_EVENT, CONTACT_REMARKS_EVENT, CONTACT_UPDATED_EVENT, ContactPanel } from './ContactPanel';
 import { EmojiPicker, FileSendDialog, SEND_FILES_MAX } from './composerExtras';
 import { ImageGalleryContext, galleryItems } from './ImageGallery';
+import { getDraft, setDraft, useDrafts } from '@/lib/drafts';
 import { FormatToolbar } from './FormatToolbar';
 import { ComposerHighlight } from './ComposerHighlight';
 import { resumeMyLiveLocations, setLive, startWatching, stopSharing, useMyActiveLives } from '@/lib/liveSharing';
@@ -1682,6 +1683,7 @@ function ConversationList({
 }) {
   const listContainerRef = useRef<HTMLDivElement>(null);
   const mentionsPage = usePathname() === '/mentions';
+  const drafts = useDrafts(); // unsent text per chat, shown as "Draft: …" in the list
   // Something typed in the search box: the list shows "Chats" and "Messages" sections, like WhatsApp
   const searching = searchQuery.trim() !== '';
   const scrollKey = `support:scroll:list:${mine ? 'mine' : leads ? 'leads' : collab ? 'collab' : mentionsPage ? 'mentions' : 'inbox'}`;
@@ -1977,6 +1979,11 @@ function ConversationList({
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
                         {typingNames(typing, c.id).length > 0 ? (
                           <p className="min-w-0 flex-1 truncate text-[11px] font-medium text-accent">typing…</p>
+                        ) : drafts[c.id] && c.id !== activeId ? (
+                          // Unsent text left in this chat's box (WhatsApp-style); the open chat shows it in the box itself
+                          <p className="min-w-0 flex-1 truncate text-[11px] text-muted" title="Not sent yet: open the chat to finish or send it">
+                            <span className="font-semibold text-accent">{drafts[c.id].mode === 'note' ? 'Draft note:' : 'Draft:'}</span> {drafts[c.id].text.replace(/\s+/g, ' ')}
+                          </p>
                         ) : (
                           <p className={`min-w-0 flex-1 truncate text-[11px] ${attention ? 'font-semibold text-ink' : 'text-muted'}`}>
                             {/* The last message's ticks when the team sent it (sent / delivered / read), like WhatsApp's chat list */}
@@ -2410,8 +2417,21 @@ function ChatPanel({
   const [undo, setUndo] = useState<Message | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Drafts (lib/drafts.ts): what's typed in the box is kept for this chat as you type, and brought back when you
+  // come back to it. textChat says which chat the box's text belongs to (set together with the text, so the two
+  // always match): right after switching chats, and before the draft is loaded, the box still holds the previous
+  // chat's text (or nothing yet), which must never be saved over this chat's draft.
+  const [textChat, setTextChat] = useState<string | null>(null);
   useEffect(() => {
-    setText('');
+    if (textChat !== conversation.id || editing) return; // editing a sent message isn't a draft
+    if (mode === 'reply' || mode === 'note') setDraft(conversation.id, text, mode);
+  }, [text, mode, editing, textChat, conversation.id]);
+
+  useEffect(() => {
+    const draft = getDraft(conversation.id);
+    setText(draft?.text ?? '');
+    setTextChat(conversation.id);
+    if (draft?.mode === 'note') setMode('note'); // a note stays a note, never sent to the customer by mistake
     setError('');
     setMenu(null);
     setEditing(null);
