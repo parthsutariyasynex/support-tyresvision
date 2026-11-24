@@ -5,6 +5,9 @@ import { createPortal } from 'react-dom';
 import { showToast } from '@/lib/toasts';
 import {
   type CatalogOption,
+  addVehicleMake,
+  addVehicleModel,
+  addVehicleYear,
   type Vehicle,
   type VehicleCustomer,
   VEHICLES_EVENT,
@@ -12,14 +15,15 @@ import {
   deleteVehicle,
   listVehicles,
   updateVehicle,
-  vehicleCatalogEnabled,
   vehicleMakes,
   vehicleModels,
   vehicleTitle,
   vehicleYears,
 } from '@/lib/vehicles';
+import { addTyreSize, listTyreSizes, sameTyreSize } from '@/lib/tyreSizes';
+import { AddableSelect } from './AddableSelect';
 import { CountryFlag } from './CountryFlag';
-import { VehicleSelect, type VehicleSelectOption } from './VehicleSelect';
+import type { VehicleSelectOption } from './VehicleSelect';
 
 // The TyresCart car (sized by width only; the height follows its 2.8:1 ratio)
 export const CarIcon = ({
@@ -54,7 +58,10 @@ const vehicleName = (v: Vehicle) => (v.plateNumber ? `${vehicleTitle(v)} (${v.pl
 // "15 Mar 2024" from yyyy-mm-dd (a calendar day: no time zone shift)
 const dayLabel = (v: string) => new Date(`${v}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
-// Today in the viewer's own time zone, for the date picker's max
+// Registration date, shown as DD/MM/YY; kept and saved as yyyy-mm-dd. "2024-03-15" → "15/03/24"
+const isoToDmy = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v.slice(8, 10)}/${v.slice(5, 7)}/${v.slice(2, 4)}` : v);
+
+// Today in the viewer's own time zone (yyyy-mm-dd): a registration date can't be after it
 function localToday() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -274,7 +281,7 @@ function VehicleCard({ vehicle: v, isEditing, onEdit, onDeleted }: { vehicle: Ve
             {v.registrationDate && (
               <div className="flex gap-1.5">
                 <dt className="shrink-0 text-muted">Registered:</dt>
-                <dd className="text-body">{dayLabel(v.registrationDate)}</dd>
+                <dd className="text-body">{isoToDmy(v.registrationDate)}</dd>
               </div>
             )}
             {v.lastServiceDate && (
@@ -326,22 +333,26 @@ function validate(f: Form): Partial<Record<Field, string>> {
   // Make, model and year are optional; a year that's filled in must be a real one
   if (f.year.trim() && !/^\d{4}$/.test(f.year.trim())) errors.year = 'Enter a 4-digit year';
   else if (f.year.trim() && (+f.year < 1900 || +f.year > maxYear)) errors.year = `Enter a year from 1900 to ${maxYear}`;
-  if (!f.tireSize1.trim()) errors.tireSize1 = 'Enter tyre size 1';
+  if (!f.tireSize1.trim()) errors.tireSize1 = 'Select tyre size 1';
+  if (f.registrationDate && f.registrationDate > localToday()) errors.registrationDate = 'The registration date can’t be in the future';
   return errors;
 }
 
-// Every year the form accepts, newest first: the Year list when the model isn't in the catalog (or it has no years)
+// Every year the form accepts, newest first: the Year list when the catalog has no years for the model
 function allYears() {
   const max = new Date().getFullYear() + 1;
   return Array.from({ length: max - 1899 }, (_, i) => String(max - i));
 }
 
 type Loaded<T> = { key: string; data: T | null; error: string };
-const findByName = (list: CatalogOption[] | null, name: string) => (name.trim() ? list?.find((o) => o.name.toLowerCase() === name.trim().toLowerCase()) : undefined);
+const nameKey = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+const byName = (a: CatalogOption, b: CatalogOption) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
 const toOptions = (list: CatalogOption[]): VehicleSelectOption[] => list.map((o) => ({ value: o.name, label: o.name, logo: o.logo }));
+// Adds one option to a loaded list (once, kept A–Z)
+const withOption = (list: CatalogOption[] | null, o: CatalogOption) => (list && !list.some((x) => nameKey(x.name) === nameKey(o.name)) ? [...list, o].sort(byName) : list);
 
-// Make → Model → Year lists for the chosen make and model (names, as saved; the catalog's slugs chain the requests).
-// No catalog on the server: the lists are empty and values are typed in ("Use …").
+// Make → Model → Year lists for the chosen make and model (by name, as saved): the Wheel API's catalog plus the ones
+// added with "+ Add New …". The add* functions put a just-added value into the list on screen.
 function useVehicleCatalog(make: string, model: string) {
   const [makes, setMakes] = useState<Loaded<CatalogOption[]>>({ key: '', data: null, error: '' });
   const [models, setModels] = useState<Loaded<CatalogOption[]>>({ key: '', data: null, error: '' });
@@ -349,60 +360,58 @@ function useVehicleCatalog(make: string, model: string) {
 
   useEffect(() => {
     let live = true;
-    vehicleCatalogEnabled()
-      .then((on) => {
-        if (!live) return;
-        if (!on) return setMakes({ key: 'makes', data: [], error: 'Vehicle list is not set up on the server (WHEEL_API_KEY).' });
-        vehicleMakes()
-          .then((data) => live && setMakes({ key: 'makes', data, error: '' }))
-          .catch((e) => live && setMakes({ key: 'makes', data: [], error: (e as Error).message }));
-      })
+    vehicleMakes()
+      .then((r) => live && setMakes({ key: 'makes', data: r.options, error: r.error ?? '' }))
       .catch((e) => live && setMakes({ key: 'makes', data: [], error: (e as Error).message }));
     return () => {
       live = false;
     };
   }, []);
 
-  const makeSlug = findByName(makes.data, make)?.slug ?? '';
+  const makeKey = make.trim() ? nameKey(make) : '';
   useEffect(() => {
-    if (!makeSlug) return;
+    if (!makeKey) return;
     let live = true;
-    setModels({ key: makeSlug, data: null, error: '' });
-    vehicleModels(makeSlug)
-      .then((data) => live && setModels({ key: makeSlug, data, error: '' }))
-      .catch((e) => live && setModels({ key: makeSlug, data: [], error: (e as Error).message }));
+    setModels({ key: makeKey, data: null, error: '' });
+    vehicleModels(make)
+      .then((r) => live && setModels({ key: makeKey, data: r.options, error: r.error ?? '' }))
+      .catch((e) => live && setModels({ key: makeKey, data: [], error: (e as Error).message }));
     return () => {
       live = false;
     };
-  }, [makeSlug]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [makeKey]);
 
-  const modelList = makeSlug && models.key === makeSlug ? models.data : null;
-  const modelSlug = findByName(modelList, model)?.slug ?? '';
-  const yearsKey = makeSlug && modelSlug ? `${makeSlug}|${modelSlug}` : '';
+  const yearsKey = makeKey && model.trim() ? `${makeKey}|${nameKey(model)}` : '';
   useEffect(() => {
     if (!yearsKey) return;
     let live = true;
-    const [m, mo] = yearsKey.split('|');
     setYears({ key: yearsKey, data: null, error: '' });
-    vehicleYears(m, mo)
-      .then((data) => live && setYears({ key: yearsKey, data, error: '' }))
+    vehicleYears(make, model)
+      .then((r) => live && setYears({ key: yearsKey, data: r.years, error: r.error ?? '' }))
       .catch((e) => live && setYears({ key: yearsKey, data: [], error: (e as Error).message }));
     return () => {
       live = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yearsKey]);
 
+  const modelList = makeKey && models.key === makeKey ? models.data : null;
   const yearList = yearsKey && years.key === yearsKey ? years.data : null;
-  // The model's own years when the catalog has them; otherwise (typed model, or none listed) every year
+  // The catalog's years for the model (with any added); none listed: every year, and nothing to add
   const yearValues = !yearsKey ? allYears() : yearList === null ? null : yearList.length ? yearList.map(String) : allYears();
   return {
     makes: makes.data ? toOptions(makes.data) : null,
     makesError: makes.error,
-    // A typed (custom) make: nothing to list, any model can be typed
-    models: !make.trim() ? [] : makeSlug ? (modelList ? toOptions(modelList) : null) : makes.data ? [] : null,
-    modelsError: makeSlug && models.key === makeSlug ? models.error : '',
+    models: !makeKey ? [] : modelList ? toOptions(modelList) : null,
+    modelsError: makeKey && models.key === makeKey ? models.error : '',
     years: yearValues ? yearValues.map((y) => ({ value: y, label: y })) : null,
     yearsError: yearsKey && years.key === yearsKey ? years.error : '',
+    canAddYear: !!yearList?.length,
+    addMake: (o: CatalogOption) => setMakes((m) => ({ ...m, data: withOption(m.data, o) })),
+    addModel: (o: CatalogOption) => setModels((m) => (m.key === makeKey ? { ...m, data: withOption(m.data, o) } : m)),
+    addYear: (y: number) =>
+      setYears((m) => (m.key === yearsKey && m.data && !m.data.includes(y) ? { ...m, data: [...m.data, y].sort((a, b) => b - a) } : m)),
   };
 }
 
@@ -432,9 +441,40 @@ function VehicleForm({
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState('');
   const errors = submitted ? validate(form) : {};
-  const today = localToday();
   const set = (k: Field, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const catalog = useVehicleCatalog(form.make, form.model);
+  // Tyre sizes (the server's list file), shared by both tyre size fields: one added in either shows in both
+  const [tyreSizes, setTyreSizes] = useState<string[] | null>(null);
+  const [tyreSizesError, setTyreSizesError] = useState('');
+  useEffect(() => {
+    let live = true;
+    listTyreSizes()
+      .then((list) => live && setTyreSizes(list))
+      .catch((e) => {
+        if (!live) return;
+        setTyreSizes([]);
+        setTyreSizesError((e as Error).message);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  // Both tyre size fields share the list (the server's file): a size added in either shows in both
+  const tyreSizeProps = {
+    options: tyreSizes ? tyreSizes.map((s) => ({ value: s, label: s })) : null,
+    loadError: tyreSizesError,
+    addNewLabel: '+ Add New Tyre Size',
+    addPlaceholder: 'e.g. 205/55 R16',
+    addMaxLength: 40,
+    uppercase: true,
+    check: (size: string) => (size.replace(/\s+/g, '').length > 30 ? 'Keep the tyre size to 30 characters or fewer' : null),
+    onAdd: async (size: string) => {
+      const added = await addTyreSize(size);
+      setTyreSizes(added.sizes);
+      return added.size;
+    },
+    onDuplicate: (size: string) => setTyreSizes((list) => (list && !list.some((s) => sameTyreSize(s, size)) ? [...list, size] : list)),
+  };
   // A different make clears the model and year; a different model clears the year (they belonged to the old one)
   const setMake = (v: string) => setForm((f) => (v === f.make ? f : { ...f, make: v, model: '', year: '' }));
   const setModel = (v: string) => setForm((f) => (v === f.model ? f : { ...f, model: v, year: '' }));
@@ -491,47 +531,114 @@ function VehicleForm({
       {/* Row 1: tyre sizes · Row 2: make, model, year · Row 3: plate number, registration date — same rows on every screen size */}
       {/* gap-y-5: room for a field's one-line error under it */}
       <div className="grid grid-cols-6 gap-x-3 gap-y-5 sm:gap-x-4">
-        {field('tireSize1', 'Tyre Size 1', true, 'col-span-3', { maxLength: 30, placeholder: 'e.g. 265/65 R17', autoFocus: !vehicle })}
-        {field('tireSize2', 'Tyre Size 2', false, 'col-span-3', { maxLength: 30, placeholder: 'Rear, if different' })}
-          <>
-            <div className="col-span-2">
-              {label('vehicle-make', 'Make', false)}
-              <VehicleSelect id="vehicle-make" label="Make" value={form.make} options={catalog.makes} loadError={catalog.makesError} onChange={setMake} placeholder="Select make" withLogo />
-            </div>
-            <div className="col-span-2">
-              {label('vehicle-model', 'Model', false)}
-              <VehicleSelect
-                id="vehicle-model"
-                label="Model"
-                value={form.model}
-                options={catalog.models}
-                loadError={catalog.modelsError}
-                onChange={setModel}
-                placeholder="Select model"
-                disabled={!form.make.trim()}
-                disabledHint="Select make first"
-              />
-            </div>
-            <div className="relative col-span-2">
-              {label('vehicle-year', 'Year', false)}
-              <VehicleSelect
-                id="vehicle-year"
-                label="Year"
-                value={form.year}
-                options={catalog.years}
-                loadError={catalog.yearsError}
-                onChange={(v) => set('year', v)}
-                placeholder="Select year"
-                disabled={!form.model.trim()}
-                disabledHint="Select model first"
-                invalid={!!errors.year}
-                numeric
-              />
-              {problem('year')}
-            </div>
-          </>
+        <div className="col-span-3">
+          <AddableSelect
+            id="vehicle-tireSize1"
+            label="Tyre Size 1"
+            required
+            {...tyreSizeProps}
+            value={form.tireSize1}
+            onChange={(v) => set('tireSize1', v)}
+            error={errors.tireSize1}
+            placeholder="Select tyre size"
+            autoFocus={!vehicle}
+          />
+        </div>
+        <div className="col-span-3">
+          <AddableSelect id="vehicle-tireSize2" label="Tyre Size 2" {...tyreSizeProps} value={form.tireSize2} onChange={(v) => set('tireSize2', v)} placeholder="Rear, if different" />
+        </div>
+        <div className="col-span-2">
+          <AddableSelect
+            id="vehicle-make"
+            label="Make"
+            value={form.make}
+            onChange={setMake}
+            options={catalog.makes}
+            loadError={catalog.makesError}
+            placeholder="Select make"
+            withLogo
+            addNewLabel="+ Add New Make"
+            addPlaceholder="e.g. Foton"
+            onAdd={async (name) => {
+              const added = await addVehicleMake(name);
+              catalog.addMake(added);
+              return added.name;
+            }}
+            onDuplicate={(name) => catalog.addMake({ slug: null, name, logo: null, custom: true })}
+          />
+        </div>
+        <div className="col-span-2">
+          <AddableSelect
+            id="vehicle-model"
+            label="Model"
+            value={form.model}
+            onChange={setModel}
+            options={catalog.models}
+            loadError={catalog.modelsError}
+            placeholder="Select model"
+            disabled={!form.make.trim()}
+            disabledHint="Select make first"
+            addNewLabel="+ Add New Model"
+            addPlaceholder="e.g. Tunland"
+            onAdd={async (name) => {
+              const added = await addVehicleModel(form.make, name);
+              catalog.addModel(added);
+              return added.name;
+            }}
+            onDuplicate={(name) => catalog.addModel({ slug: null, name, logo: null, custom: true })}
+          />
+        </div>
+        <div className="col-span-2">
+          <AddableSelect
+            id="vehicle-year"
+            label="Year"
+            value={form.year}
+            onChange={(v) => set('year', v)}
+            options={catalog.years}
+            loadError={catalog.yearsError}
+            error={errors.year}
+            placeholder="Select year"
+            disabled={!form.model.trim()}
+            disabledHint="Select model first"
+            numeric
+            canAdd={catalog.canAddYear}
+            addNewLabel="+ Add New Year"
+            addPlaceholder="e.g. 2027"
+            check={(y) => (/^\d{4}$/.test(y) && +y >= 1900 && +y <= new Date().getFullYear() + 1 ? null : `Enter a year from 1900 to ${new Date().getFullYear() + 1}`)}
+            onAdd={async (y) => {
+              const added = await addVehicleYear(form.make, form.model, Number(y));
+              catalog.addYear(added);
+              return String(added);
+            }}
+            onDuplicate={(y) => catalog.addYear(Number(y))}
+          />
+        </div>
         {field('plateNumber', 'Plate Number', false, 'col-span-3', { maxLength: 20, placeholder: 'e.g. A 12345', style: { textTransform: form.plateNumber ? 'uppercase' : 'none' } })}
-        {field('registrationDate', 'Registration Date', false, 'col-span-3', { type: 'date', max: today })}
+        {/* The browser's own date field, so a click anywhere on it opens the calendar (its picker icon is stretched
+            over the whole field). Its text would follow the computer's date format, so it's hidden and the date is
+            shown on top as DD/MM/YY. */}
+        <div className="relative col-span-3">
+          {label('vehicle-registrationDate', 'Registration Date', false)}
+          <div className="relative">
+            <input
+              id="vehicle-registrationDate"
+              type="date"
+              max={localToday()}
+              value={form.registrationDate}
+              onChange={(e) => set('registrationDate', e.target.value)}
+              aria-invalid={!!errors.registrationDate}
+              className={`${inputClass(!!errors.registrationDate)} relative cursor-pointer pr-9 text-transparent [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-auto [&::-webkit-calendar-picker-indicator]:w-auto [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-datetime-edit]:opacity-0`}
+            />
+            <span className={`pointer-events-none absolute inset-y-0 left-3 flex items-center text-[13px] ${form.registrationDate ? 'text-ink' : 'text-faint'}`}>
+              {form.registrationDate ? isoToDmy(form.registrationDate) : 'DD/MM/YY'}
+            </span>
+            <svg className="pointer-events-none absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
+            </svg>
+          </div>
+          {problem('registrationDate')}
+        </div>
         <div className="col-span-6">
           {label('vehicle-remarks', 'Remarks', false)}
           <textarea

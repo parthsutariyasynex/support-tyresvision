@@ -1,0 +1,16 @@
+/* Selected text: a blue highlight with dark text, like WhatsApp Web, so a selection stands out against the purple theme
+   and the purple chat bubbles. Overrides the body's selection colours in globals.css (more specific; that file stays
+   as it is). */
+html body ::selection,
+html body::selection {
+  background-color: #a6cfff;
+  color: var(--color-ink);
+}
+
+/* The message box draws its text in a layer underneath (ComposerHighlight) and keeps its own text invisible: only
+   the highlight shows, never a second copy of the selected words. Its highlight is see-through (the same blue as
+   above when over white), because a solid one would sit on top of the words underneath and hide them. */
+html body textarea.text-transparent::selection {
+  color: transparent;
+  background-color: rgba(0, 120, 255, 0.35);
+}

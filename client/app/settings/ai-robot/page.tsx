@@ -111,7 +111,7 @@ function AiRobot({ me }: { me: Me }) {
   }, [admin, router]);
   if (!admin) return null;
   if (!saved || !form)
-    return error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p> : <div className="h-96 max-w-4xl animate-pulse rounded-xl bg-surface-strong" aria-busy="true" />;
+    return error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p> : <div className="h-96 w-full animate-pulse rounded-xl bg-surface-strong" aria-busy="true" />;
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f!, [k]: v }));
   const initial = formOf(saved);
@@ -151,7 +151,7 @@ function AiRobot({ me }: { me: Me }) {
 
   return (
     <>
-      <div className="max-w-4xl">
+      <div className="w-full">
         <h2 className="text-xl font-bold text-ink">AI Robot</h2>
         <p className="mt-1 text-[13px] text-body-soft">
           Answers customers in unassigned chats when nobody from the team replies, using ChatGPT, the Tyrescart catalogue and the company information below. It stops in a chat as soon as a

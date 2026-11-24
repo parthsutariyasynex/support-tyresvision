@@ -13,6 +13,7 @@ import {
   type Conversation,
   type ConversationStatus,
   type Message,
+  type MessageHit,
   deleteMessage,
   editMessage,
   reactToMessage,
@@ -24,6 +25,7 @@ import {
   fetchMessages,
   markConversationRead,
   matchesSearch,
+  searchMessages,
   needsAttention,
   newerMessage,
   clearConversation,
@@ -51,7 +53,7 @@ import { type Assignee, type WorkspaceMember, claimConversation, fetchAssignees,
 import { teamPhotoChanged } from '@/lib/teamPhotos';
 import { type Label, type Permissions, fetchLabels, fetchPermissions } from '@/lib/labels';
 import { EMPTY_MENU_FILTERS, type MenuFilters, matchesMenuFilters, toServerFilter } from '@/lib/chatFilters';
-import { findMessageMatches } from '@/lib/messageSearch';
+import { findMessageMatches, highlightWords, searchSnippet } from '@/lib/messageSearch';
 import { bindPresence, presenceOf, usePresence } from '@/lib/presence';
 import { revalidateOnReturn } from '@/lib/revalidate';
 import { createOpenChatReloader, mergeReloadedMessages } from '@/lib/chatReload';
@@ -59,7 +61,9 @@ import { showsAssignCheckboxes } from '@/lib/roles';
 import { AppShell, OPEN_CHAT_EVENT } from '../AppShell';
 import { pinText, showToast } from '@/lib/toasts';
 import { CONTACT_LISTS_EVENT, CONTACT_REMARKS_EVENT, CONTACT_UPDATED_EVENT, ContactPanel } from './ContactPanel';
-import { EmojiPicker, FileSendDialog } from './composerExtras';
+import { EmojiPicker, FileSendDialog, SEND_FILES_MAX } from './composerExtras';
+import { ImageGalleryContext, galleryItems } from './ImageGallery';
+import { getDraft, setDraft, useDrafts } from '@/lib/drafts';
 import { FormatToolbar } from './FormatToolbar';
 import { ComposerHighlight } from './ComposerHighlight';
 import { resumeMyLiveLocations, setLive, startWatching, stopSharing, useMyActiveLives } from '@/lib/liveSharing';
@@ -95,11 +99,14 @@ import { NO_DELETE, createDeleteChat, deleteChatText, withoutChat } from '@/lib/
 import { snoozeChoices, snoozedUntilText } from '@/lib/snooze';
 import { LabelChips, LabelPicker, TagIcon } from './labels';
 import { NotificationBell, unlockSound } from './notifications';
+import { ReminderClock } from './ReminderClock';
 import { setOpenConversationId } from '@/lib/desktopNotifications';
 import { dismissChatPopups } from '@/lib/messagePopups';
 import { isWindowClosedError, lastCustomerMessageAt, msUntilClose, windowOpen } from '@/lib/messagingWindow';
 import { OVERLAY_SELECTOR, type EscapeTarget, escapeClosesChat } from '@/lib/escapeToClose';
 import { NewChatDialog } from './NewChatDialog';
+import type { CountryCode } from 'libphonenumber-js';
+import { phoneFromSearch } from '@/lib/profileOptions';
 import { NoteBubble } from './NoteBubble';
 import { type MentionMember, MentionMenu } from './MentionMenu';
 import { insertMention, matchMembers, mentionAt } from '@/lib/mentions';
@@ -132,6 +139,9 @@ import { VEHICLES_EVENT } from '@/lib/vehicles';
 
 // How long a reply may take to be answered (the server gives Meta 30 s) before it's shown as not confirmed
 const SEND_TIMEOUT_MS = 60_000;
+// Clicking a quoted (or pinned) message that isn't loaded loads earlier messages until it is: at most this many
+// pages (PAGE_SIZE each, 1,000 messages)
+const JUMP_MAX_PAGES = 20;
 
 // The Location screen (📎 → Location): its map library loads only when it's opened
 const LocationDialog = dynamic(() => import('./LocationDialog').then((m) => m.LocationDialog), { ssr: false });
@@ -150,7 +160,7 @@ export default function InboxPage() {
   return <AppShell>{(me) => <Inbox meName={me.user.name} channelPhone={me.workspace.whatsapp?.displayPhone ?? null} defaultCountry={me.workspace.settings?.defaultCountry ?? ''} />}</AppShell>;
 }
 
-type ConversationFilter = { labelId: string | null; assignee: string | null; search: string | null; sort: SortOrder; status: 'open' | 'snoozed' | 'closed' | null; leadStage: string | null } & ReturnType<typeof toServerFilter>;
+type ConversationFilter = { labelId: string | null; assignee: string | null; search: string | null; sort: SortOrder; status: 'open' | 'snoozed' | 'closed' | null; leadStage: string | null; view: 'unread' | 'unreplied' | null } & ReturnType<typeof toServerFilter>;
 const filterKey = (f: ConversationFilter) => JSON.stringify(f);
 type SortOrder = 'newest' | 'oldest';
 type StatusChange = Pick<Conversation, 'status' | 'closedAt' | 'closedById'> & { conversationId: string; snoozedUntil?: string | null };
@@ -326,6 +336,15 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     }
     return null;
   });
+  // The same cursor for code that loads several pages in a row (loadOlderMessages), always the latest. Synced while
+  // rendering (only when the state changes, so loadOlderMessages' own update isn't undone): the chat panel's effects
+  // run before this component's, and one of them (opening a search result) may load older pages at once.
+  const olderCursorRef = useRef(olderCursor);
+  const olderCursorSeenRef = useRef(olderCursor);
+  if (olderCursorSeenRef.current !== olderCursor) {
+    olderCursorSeenRef.current = olderCursor;
+    olderCursorRef.current = olderCursor;
+  }
 
   const [conversationsCursor, setConversationsCursor] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -345,7 +364,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
   const [membersVersion, setMembersVersion] = useState(0);
   const [permissions, setPermissions] = useState<Permissions | null>(cachedPermissions);
   const permissionsRef = useRef(permissions);
-  // Toasts (assignment, new chat, reminders) are shown app-wide by AppShell from the shared store in lib/toasts
+  // Toasts (assignment, new chat) are shown app-wide by AppShell from the shared store in lib/toasts
   const [profileOpen, setProfileOpenState] = useState(readProfileOpen);
   const setProfileOpen = useCallback((open: boolean) => {
     cachedProfileOpen = open;
@@ -414,7 +433,11 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
   const searchParams = useSearchParams();
   const stageFilter = searchParams.get('stage') || null;
   const menuFilterKey = JSON.stringify(menuFilters);
-  const currentFilter = (): ConversationFilter => ({ labelId: labelFilter, assignee: assigneeFilter, search: searchTerm || null, sort: sortOrder, status: statusFilter === 'all' ? null : statusFilter, leadStage: stageFilter, ...toServerFilter(menuFilters) });
+  // The Unread / Unreplied tab, applied by the server too (so paging and the "Total Contacts" footer follow it)
+  const tabView = filterType === 'unread' || filterType === 'unreplied' ? filterType : null;
+  const currentFilter = (): ConversationFilter => ({ labelId: labelFilter, assignee: assigneeFilter, search: searchTerm || null, sort: sortOrder, status: statusFilter === 'all' ? null : statusFilter, leadStage: stageFilter, view: tabView, ...toServerFilter(menuFilters) });
+  // List footer: how many chats (one per contact) the current filters match on the server, not just those loaded
+  const [matchCount, setMatchCount] = useState<number | null>(null);
   const filterRef = useRef<ConversationFilter>(currentFilter());
   filterRef.current = currentFilter();
   const lastActiveRef = useRef<Conversation | null>(null);
@@ -449,6 +472,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
         if (seq !== loadSeqRef.current) return;
         setConversationsError(null);
         setServerSearchedTerm(filter.search ?? '');
+        if (page.totalCount !== null && page.totalCount !== undefined) setMatchCount(page.totalCount);
         // A search result replaces the list outright (never merged with chats loaded earlier that no longer match)
         if (!loadedMoreRef.current || filter.search) {
           updateConversations(page.nodes);
@@ -750,7 +774,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     loadedMoreRef.current = false;
     setConversationsCursor(null);
     loadConversations();
-  }, [labelFilter, assigneeFilter, searchTerm, sortOrder, menuFilterKey, statusFilter, stageFilter, loadConversations]);
+  }, [labelFilter, assigneeFilter, searchTerm, sortOrder, menuFilterKey, statusFilter, stageFilter, tabView, loadConversations]);
 
   // AppShell's top header leaves a slot for page controls. Look it up once this page is in the DOM (per path), and
   // if the header isn't rendered yet (first sign-in, before "me" loads) wait for it to appear.
@@ -851,6 +875,58 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     [pathname],
   );
 
+  // Search → "Messages" section (like WhatsApp): messages with all the typed words, in the chats the list's own view,
+  // tab and filters cover. Follows the same debounced term as the chat search.
+  const [hits, setHits] = useState<{ term: string; items: MessageHit[]; cursor: string | null; total: number | null; words: string[]; error: string | null } | null>(null);
+  const [hitsLoading, setHitsLoading] = useState(false);
+  const hitsSeqRef = useRef(0);
+  const hitsFilterKey = JSON.stringify({ ...filterRef.current, search: null, sort: null });
+  useEffect(() => {
+    const term = searchTerm.trim();
+    const seq = ++hitsSeqRef.current;
+    if (!term) {
+      setHits(null);
+      setHitsLoading(false);
+      return;
+    }
+    const { search: _search, sort: _sort, ...filter } = filterRef.current;
+    setHitsLoading(true);
+    searchMessages(term, filter)
+      .then((page) => {
+        if (seq === hitsSeqRef.current)
+          setHits({ term, items: page.nodes, cursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null, total: page.totalCount, words: page.words, error: null });
+      })
+      .catch((err) => {
+        if (seq === hitsSeqRef.current) setHits({ term, items: [], cursor: null, total: null, words: [], error: (err as Error).message || "Couldn't search messages" });
+      })
+      .finally(() => {
+        if (seq === hitsSeqRef.current) setHitsLoading(false);
+      });
+  }, [searchTerm, hitsFilterKey]);
+
+  const loadMoreHits = useCallback(async () => {
+    if (!hits?.cursor) return;
+    const seq = hitsSeqRef.current;
+    const { search: _search, sort: _sort, ...filter } = filterRef.current;
+    setHitsLoading(true);
+    try {
+      const page = await searchMessages(hits.term, filter, hits.cursor);
+      if (seq !== hitsSeqRef.current) return;
+      setHits((h) => h && { ...h, items: [...h.items, ...page.nodes.filter((n) => !h.items.some((x) => x.message.id === n.message.id))], cursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null });
+    } catch {
+      // the button stays, to try again
+    } finally {
+      if (seq === hitsSeqRef.current) setHitsLoading(false);
+    }
+  }, [hits]);
+
+  // A found message was clicked: open its chat (even one the chat list doesn't show) and go to that message there
+  const [focusMessage, setFocusMessage] = useState<{ conversationId: string; messageId: string; nonce: number } | null>(null);
+  const openHit = (hit: MessageHit) => {
+    setFocusMessage({ conversationId: hit.conversationId, messageId: hit.message.id, nonce: Date.now() });
+    openConversation(hit.conversationId);
+  };
+
   // A toast was clicked (AppShell): open that chat here
   useEffect(() => {
     const onOpen = (e: Event) => {
@@ -930,7 +1006,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     loadFeed();
     loadUnreadTotal();
     loadUnassignedCount();
-    const socket = io(API_URL, { auth: { token: getToken() } });
+    const socket = io(API_URL, { auth: { token: getToken() }, addTrailingSlash: false });
     socketRef.current = socket;
     const unbindPresence = bindPresence(socket); // online / away / offline dots
     // The open chat on screen is being read: its customer messages are read now (badge 0 here, and on the server before
@@ -993,6 +1069,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
       if (!document.hidden && conversationsRef.current.some((c) => c.id === id && c.unread > 0)) void readOpenChat().then(loadUnreadTotal);
     };
     document.addEventListener('visibilitychange', onShown);
+    // (Header → Reminders reloads on live events app-wide, in AppShell)
     socket.on('typing', (e: TypingEvent) => {
       if (e.userId === permissionsRef.current?.userId) return; // yourself in another tab
       setTyping((s) => applyTypingEvent(s, e));
@@ -1227,11 +1304,16 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
     };
   }, [activeId, patchConversations, loadUnreadTotal]);
 
-  async function loadOlderMessages() {
-    if (!activeId || !olderCursor) return;
+  // One page of older messages. Resolves true while there are more still older. The cursor is read from a ref, so
+  // calls in a row (finding a quoted message further up: ChatPanel's jumpTo) each get the next page, not the same one.
+  async function loadOlderMessages(): Promise<boolean> {
+    const cursorNow = olderCursorRef.current;
+    if (!activeId || !cursorNow) return false;
     try {
-      const page = await fetchMessages(activeId, olderCursor);
+      const page = await fetchMessages(activeId, cursorNow);
       const cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+      if (activeIdRef.current !== activeId) return false; // another chat was opened meanwhile
+      olderCursorRef.current = cursor;
       setMessages((prev) => {
         const next = [...page.nodes.filter((m) => !prev.some((p) => p.id === m.id)), ...prev];
         const c = messagesCache.get(activeId);
@@ -1243,8 +1325,10 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
         return next;
       });
       setOlderCursor(cursor);
+      return !!cursor;
     } catch (err) {
       alert((err as Error).message);
+      return false;
     }
   }
 
@@ -1317,7 +1401,13 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
         defaultCountry={defaultCountry}
         conversationsError={conversationsError}
         onLoadMore={conversationsCursor ? loadMoreConversations : undefined}
+        matchCount={conversationsError ? null : matchCount}
+        hits={searchQuery.trim() ? hits : null}
+        hitsLoading={hitsLoading || (!!searchQuery.trim() && searchQuery.trim() !== searchTerm)}
+        onLoadMoreHits={hits?.cursor ? loadMoreHits : undefined}
+        onOpenHit={openHit}
         searchQuery={searchQuery}
+        chatsSettled={serverSearchedTerm === searchQuery.trim() && searchTerm === searchQuery.trim()}
         onSearchChange={setSearchQuery}
         filterType={filterType}
         onFilterChange={onFilterTypeChange}
@@ -1356,6 +1446,9 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
           conversation={active}
           messages={messagesChatId === active.id ? messages : []}
           onLoadOlder={olderCursor ? loadOlderMessages : undefined}
+          focusMessageId={focusMessage?.conversationId === active.id ? focusMessage.messageId : null}
+          focusNonce={focusMessage?.nonce ?? 0}
+          onFocusDone={() => setFocusMessage(null)}
           onSent={(m) => {
             setMessages((p) => {
               const next = p.some((x) => x.id === m.id) ? p : [...p, m];
@@ -1420,6 +1513,7 @@ function Inbox({ meName, channelPhone, defaultCountry }: { meName: string; chann
           />,
           headerSlot,
         )}
+      {headerSlot && createPortal(<ReminderClock activeId={activeId} onSelect={openConversation} />, headerSlot)}
       {headerSlot &&
         createPortal(
           <AssignDropdown
@@ -1491,7 +1585,13 @@ function ConversationList({
   defaultCountry,
   conversationsError,
   onLoadMore,
+  matchCount,
+  hits,
+  hitsLoading,
+  onLoadMoreHits,
+  onOpenHit,
   searchQuery,
+  chatsSettled,
   sortOrder,
   onSortChange,
   statusFilter,
@@ -1545,7 +1645,17 @@ function ConversationList({
   // empty-state copy
   conversationsError?: string | null;
   onLoadMore?: () => void;
+  // Every chat the filters match on the server (one per contact), for the "Total Contacts" footer; null until known
+  matchCount: number | null;
+  // Search → "Messages" section: the found messages (null while not searching), and what to do with them
+  hits: { term: string; items: MessageHit[]; cursor: string | null; total: number | null; words: string[]; error: string | null } | null;
+  hitsLoading: boolean;
+  onLoadMoreHits?: () => void;
+  onOpenHit: (hit: MessageHit) => void;
   searchQuery: string;
+  // The server's chat list is for the text now in the search box (false for the moment after typing or clearing,
+  // while the list still holds the previous search's chats): the empty states wait for it, so they don't flash
+  chatsSettled: boolean;
   sortOrder: SortOrder;
   onSortChange: (s: SortOrder) => void;
   statusFilter: StatusFilter;
@@ -1573,6 +1683,9 @@ function ConversationList({
 }) {
   const listContainerRef = useRef<HTMLDivElement>(null);
   const mentionsPage = usePathname() === '/mentions';
+  const drafts = useDrafts(); // unsent text per chat, shown as "Draft: …" in the list
+  // Something typed in the search box: the list shows "Chats" and "Messages" sections, like WhatsApp
+  const searching = searchQuery.trim() !== '';
   const scrollKey = `support:scroll:list:${mine ? 'mine' : leads ? 'leads' : collab ? 'collab' : mentionsPage ? 'mentions' : 'inbox'}`;
   const restoredScrollRef = useRef<string | null>(null);
 
@@ -1602,7 +1715,13 @@ function ConversationList({
   const presence = usePresence(); // online / away / offline dots next to assignees
   // New chat (dialog): a new number gets a chat; a number that already has one opens it (never a second contact)
   const [newChatOpen, setNewChatOpen] = useState(false);
-  const newChat = () => setNewChatOpen(true);
+  // Searched for a number that has no chat: "Start a conversation" opens New chat with it filled in
+  const [newChatPrefill, setNewChatPrefill] = useState<{ country: string; national: string } | null>(null);
+  const newChat = () => {
+    setNewChatPrefill(null);
+    setNewChatOpen(true);
+  };
+  const searchedPhone = searching ? phoneFromSearch(searchQuery, defaultCountry as CountryCode) : null;
   function onNewChat(c: Conversation, startedNow: boolean) {
     setNewChatOpen(false);
     onRefresh();
@@ -1621,7 +1740,7 @@ function ConversationList({
 
   return (
     <section className="relative z-30 flex h-full min-h-0 w-72 sm:w-80 shrink-0 flex-col border-r border-line/90 bg-surface">
-      {newChatOpen && <NewChatDialog defaultCountry={defaultCountry} onDone={onNewChat} onClose={() => setNewChatOpen(false)} />}
+      {newChatOpen && <NewChatDialog defaultCountry={defaultCountry} initialNumber={newChatPrefill} onDone={onNewChat} onClose={() => setNewChatOpen(false)} />}
       {/* Top Header Metrics + Refresh Button */}
       <div className="flex shrink-0 items-center justify-between px-4 pt-3 pb-2 text-xs text-muted">
         <StatusMenu value={statusFilter} onChange={onStatusFilterChange} counts={statusCounts} />
@@ -1751,7 +1870,7 @@ function ConversationList({
               Retry
             </button>
           </div>
-        ) : conversations.length === 0 && filterType !== 'all' ? (
+        ) : conversations.length === 0 && (searching || !chatsSettled) ? null /* searching with no chats: the Messages section and "Start a conversation" below; just cleared: the full list is on its way */ : conversations.length === 0 && filterType !== 'all' ? (
           <p className="p-5 text-xs leading-relaxed text-muted">No conversations match this filter.</p>
         ) : conversations.length === 0 && leads ? (
           <p className="p-5 text-xs leading-relaxed text-muted">
@@ -1802,6 +1921,8 @@ function ConversationList({
           </div>
         ) : (
           <ul className="divide-y divide-line-soft">
+            {/* Searching: the chats (by name, number, label or assignee) come under "Chats", the messages below */}
+            {searching && <SearchHeading>Chats</SearchHeading>}
             {leads && claimError && (
               <li className="bg-danger-soft px-3.5 py-2 text-[11px] text-danger">{claimError.message}</li>
             )}
@@ -1858,6 +1979,11 @@ function ConversationList({
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
                         {typingNames(typing, c.id).length > 0 ? (
                           <p className="min-w-0 flex-1 truncate text-[11px] font-medium text-accent">typing…</p>
+                        ) : drafts[c.id] && c.id !== activeId ? (
+                          // Unsent text left in this chat's box (WhatsApp-style); the open chat shows it in the box itself
+                          <p className="min-w-0 flex-1 truncate text-[11px] text-muted" title="Not sent yet: open the chat to finish or send it">
+                            <span className="font-semibold text-accent">{drafts[c.id].mode === 'note' ? 'Draft note:' : 'Draft:'}</span> {drafts[c.id].text.replace(/\s+/g, ' ')}
+                          </p>
                         ) : (
                           <p className={`min-w-0 flex-1 truncate text-[11px] ${attention ? 'font-semibold text-ink' : 'text-muted'}`}>
                             {/* The last message's ticks when the team sent it (sent / delivered / read), like WhatsApp's chat list */}
@@ -1958,8 +2084,104 @@ function ConversationList({
             Load more conversations
           </button>
         )}
+        {/* Search → Messages (like WhatsApp): each message with all the typed words, its words highlighted; a click
+            opens the chat at that message */}
+        {searching && hits && hits.term === searchQuery.trim() && hits.items.length > 0 && (
+          <ul className="divide-y divide-line-soft border-t border-line-soft">
+            <SearchHeading>Messages{hits.total !== null ? ` (${hits.total.toLocaleString('en-US')})` : ''}</SearchHeading>
+            {hits.items.map((hit) => (
+              <MessageHitRow key={hit.message.id} hit={hit} words={hits.words} active={hit.conversationId === activeId} onOpen={() => onOpenHit(hit)} />
+            ))}
+          </ul>
+        )}
+        {searching && onLoadMoreHits && hits?.term === searchQuery.trim() && (
+          <button
+            onClick={onLoadMoreHits}
+            disabled={hitsLoading}
+            className="w-full border-t border-line-soft py-2.5 text-xs font-medium text-primary hover:bg-surface-muted disabled:opacity-50 transition"
+          >
+            More messages
+          </button>
+        )}
+        {searching && hitsLoading && !(hits?.term === searchQuery.trim() && hits.items.length) && (
+          <p className="px-3.5 py-3 text-[11px] text-muted">Searching messages…</p>
+        )}
+        {searching && hits?.error && hits.term === searchQuery.trim() && <p className="px-3.5 py-3 text-[11px] text-danger">{hits.error}</p>}
+        {searching && !hitsLoading && !conversationsError && conversations.length === 0 && hits?.term === searchQuery.trim() && !hits.items.length && !hits.error && (
+          <p className="p-5 text-xs leading-relaxed text-muted">
+            No chats or messages found for &ldquo;{searchQuery.trim()}&rdquo;.
+          </p>
+        )}
+        {/* Searched and no chat came up (e.g. a number nobody has chatted with yet): start one from here, with the
+            number filled in when the search is a phone number */}
+        {searching && chatsSettled && !hitsLoading && !conversationsError && conversations.length === 0 && (
+          <div className="px-5 pb-5 pt-1">
+            {!!hits?.items.length && <p className="pb-3 pt-3 text-xs leading-relaxed text-muted">No chats found for &ldquo;{searchQuery.trim()}&rdquo;.</p>}
+            <button
+              onClick={() => {
+                setNewChatPrefill(searchedPhone ? { country: searchedPhone.country, national: searchedPhone.national } : null);
+                setNewChatOpen(true);
+              }}
+              className="w-full rounded-lg bg-secondary py-2 px-3 text-xs font-semibold text-on-primary shadow-2xs hover:bg-secondary-hover transition flex items-center justify-center gap-1.5"
+            >
+              <span>+</span> Start a new conversation
+            </button>
+          </div>
+        )}
       </div>
+      {/* Sticky footer: how many contacts the current view, tab, search and filters match (all of them on the server,
+          not only the chats loaded so far); stays put while the list scrolls */}
+      {matchCount !== null && (
+        <div role="status" className="shrink-0 border-t border-line-soft bg-surface px-3.5 py-2 text-[11px] text-muted">
+          Total Contacts: <span className="font-semibold text-ink">{matchCount.toLocaleString('en-US')}</span>
+        </div>
+      )}
     </section>
+  );
+}
+
+// "Chats" / "Messages" above the search results
+function SearchHeading({ children }: { children: React.ReactNode }) {
+  return <li className="bg-surface px-3.5 pb-1.5 pt-3 text-[10px] font-bold uppercase tracking-wider text-faint">{children}</li>;
+}
+
+// One found message (search → Messages): the customer, when it was sent (ticks on ours), and a line of the text with
+// the searched words highlighted; a click opens the chat at that message
+function MessageHitRow({ hit, words, active, onOpen }: { hit: MessageHit; words: string[]; active: boolean; onOpen: () => void }) {
+  const m = hit.message;
+  const name = hit.contactName?.trim() || `+${hit.contactWaId}`;
+  const text = searchSnippet(filePreview(m) ?? m.body, words);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className={`flex w-full flex-col gap-0.5 px-3.5 py-2.5 text-left transition ${active ? 'bg-primary-subtle' : 'hover:bg-surface-muted'}`}
+      >
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate text-xs font-semibold text-ink">{name}</span>
+          <span className="shrink-0 text-[10px] text-faint">{listTimestamp(m.createdAt)}</span>
+        </span>
+        <span className="flex min-w-0 items-start gap-1 text-[11px] leading-snug text-body-soft">
+          {m.direction === 'out' && (
+            <span className="mt-px shrink-0">
+              <StatusTicks status={m.status} error={m.error} />
+            </span>
+          )}
+          <span className="line-clamp-2 break-words">
+            {highlightWords(text, words).map((s, i) =>
+              s.match ? (
+                <strong key={i} className="font-semibold text-primary">
+                  {s.text}
+                </strong>
+              ) : (
+                <Fragment key={i}>{s.text}</Fragment>
+              ),
+            )}
+          </span>
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -1980,6 +2202,9 @@ function ChatPanel({
   messages,
   isChatLoading = false,
   onLoadOlder,
+  focusMessageId,
+  focusNonce,
+  onFocusDone,
   onSent,
   meName,
   onOpenLabels,
@@ -2008,7 +2233,12 @@ function ChatPanel({
   meName: string; // you: the "My name" quick fill when sending a template
   messages: Message[];
   isChatLoading?: boolean;
-  onLoadOlder?: () => void;
+  // Loads one page of older messages; resolves true while there are more
+  onLoadOlder?: () => Promise<boolean>;
+  // Opened from a search result: the message to go to once the chat is on screen (focusNonce: a new click on the same one)
+  focusMessageId: string | null;
+  focusNonce: number;
+  onFocusDone: () => void;
   onSent: (m: Message) => void;
   onOpenLabels: (anchor: HTMLElement) => void;
   viewer: { userId: string; isAdmin: boolean; role?: string } | null;
@@ -2049,7 +2279,8 @@ function ChatPanel({
   const [text, setText] = useState('');
   // Emoji picker and image sending
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null); // the image or document about to be sent
+  const [sendFiles, setSendFiles] = useState<File[]>([]); // the images, videos or documents about to be sent (up to SEND_FILES_MAX)
+  const [pickNotice, setPickNotice] = useState(''); // why some chosen files were left out (over the limit, wrong type…), shown in the preview
   const [attachOpen, setAttachOpen] = useState(false); // 📎 menu: Photo, video or document / Location
   const [locationOpen, setLocationOpen] = useState(false);
   const attachRef = useRef<HTMLDivElement>(null);
@@ -2186,8 +2417,21 @@ function ChatPanel({
   const [undo, setUndo] = useState<Message | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Drafts (lib/drafts.ts): what's typed in the box is kept for this chat as you type, and brought back when you
+  // come back to it. textChat says which chat the box's text belongs to (set together with the text, so the two
+  // always match): right after switching chats, and before the draft is loaded, the box still holds the previous
+  // chat's text (or nothing yet), which must never be saved over this chat's draft.
+  const [textChat, setTextChat] = useState<string | null>(null);
   useEffect(() => {
-    setText('');
+    if (textChat !== conversation.id || editing) return; // editing a sent message isn't a draft
+    if (mode === 'reply' || mode === 'note') setDraft(conversation.id, text, mode);
+  }, [text, mode, editing, textChat, conversation.id]);
+
+  useEffect(() => {
+    const draft = getDraft(conversation.id);
+    setText(draft?.text ?? '');
+    setTextChat(conversation.id);
+    if (draft?.mode === 'note') setMode('note'); // a note stays a note, never sent to the customer by mistake
     setError('');
     setMenu(null);
     setEditing(null);
@@ -2265,7 +2509,7 @@ function ChatPanel({
   const [noteFiles, setNoteFiles] = useState<File[]>([]);
   const noteFileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => setNoteFiles([]), [conversation.id]);
-  function addNoteFiles(list: FileList | null) {
+  function addNoteFiles(list: FileList | File[] | null) {
     const chosen = Array.from(list ?? []);
     const problems = chosen.map((f) => ('problem' in checkFile(f) ? `${f.name}: ${(checkFile(f) as { problem: string }).problem}` : null)).filter(Boolean);
     const ok = chosen.filter((f) => !('problem' in checkFile(f)));
@@ -2423,14 +2667,17 @@ function ChatPanel({
     });
   }
 
-  async function sendImageWithCaption(caption: string) {
-    if (!imageFile) return;
-    const m = await sendFile(conversation.id, imageFile, caption, replyTo?.id).catch((err) => {
+  // One of the chosen files, with its caption; the reply (if any) goes with the first one sent
+  // (read from a ref: the preview window sends one file after another without re-rendering in between)
+  const replyToRef = useRef(replyTo);
+  replyToRef.current = replyTo;
+  async function sendOneFile(file: File, caption: string) {
+    const m = await sendFile(conversation.id, file, caption, replyToRef.current?.id).catch((err) => {
       noteRefusal(err);
       throw err;
     });
     onSent(m);
-    setImageFile(null);
+    replyToRef.current = null;
     setReplyTo(null);
   }
 
@@ -2445,13 +2692,25 @@ function ChatPanel({
   }
 
   // A chosen or dropped file: checked first (type, size), then the preview window
-  function pickFile(f: File | undefined, many = false) {
-    if (!f) return;
+  // Chosen, dropped or pasted files: each checked (type, size), then added to the preview window (up to
+  // SEND_FILES_MAX; a file that can't be sent is left out and says why)
+  function pickFiles(list: File[]) {
+    if (!list.length) return;
     if (windowClosed) return setError('24-hour window closed: only approved templates can be sent until the customer writes again.');
-    const r = checkFile(f, { video: true });
-    if ('problem' in r) return setError(r.problem);
-    setError(many ? 'One file at a time: sending the first one.' : '');
-    setImageFile(f);
+    const problems: string[] = [];
+    const ok: File[] = [];
+    for (const f of list) {
+      const r = checkFile(f, { video: true });
+      if ('problem' in r) problems.push(list.length > 1 ? `${f.name}: ${r.problem}` : r.problem);
+      else ok.push(f);
+    }
+    const room = Math.max(SEND_FILES_MAX - sendFiles.length, 0);
+    if (ok.length > room) problems.push(`You can send up to ${SEND_FILES_MAX} files at a time: ${ok.length - room} ${ok.length - room === 1 ? 'was' : 'were'} left out.`);
+    const willShow = sendFiles.length > 0 || (room > 0 && ok.length > 0);
+    // Shown in the preview window at once when it is (or is about to be) open; otherwise under the message box
+    setPickNotice(willShow ? problems.join(' ') : '');
+    setError(willShow ? '' : problems.join(' '));
+    if (room > 0 && ok.length) setSendFiles((prev) => [...prev, ...ok].slice(0, SEND_FILES_MAX));
   }
   // Files can be sent (and dropped) only where the message box is: an open chat you may reply in
   const canAttach = !isClosed && !windowClosed && !editing && !(!conversation.assignee && viewer?.role !== 'supervisor' && !viewer?.isAdmin);
@@ -2507,11 +2766,45 @@ function ChatPanel({
     }
   }, [replyTo, replyLive?.deletedAt]);
 
-  // Go to the message a reply quotes (if it's loaded) and mark it for a moment
-  function jumpTo(id: string) {
-    const el = messagesContainerRef.current?.querySelector(`[data-message-id="${id}"]`);
-    if (!el) return setError('The original message is further up: load earlier messages to see it.');
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // Go to the message a reply quotes (or a pinned message) and mark it for a moment, like WhatsApp. One that isn't
+  // loaded yet is further up: earlier messages are loaded, a page at a time, until it is (at most JUMP_MAX_PAGES).
+  const [finding, setFinding] = useState(false);
+  const findingRef = useRef(false);
+  const chatIdRef = useRef(conversation.id);
+  chatIdRef.current = conversation.id;
+  async function jumpTo(id: string) {
+    const find = () => messagesContainerRef.current?.querySelector(`[data-message-id="${id}"]`) ?? null;
+    let el = find();
+    if (!el && onLoadOlder) {
+      if (findingRef.current) return; // already looking for one
+      findingRef.current = true;
+      setFinding(true);
+      setError('');
+      const chatId = conversation.id;
+      try {
+        let more = true;
+        for (let page = 0; !el && more && page < JUMP_MAX_PAGES; page++) {
+          const shown = messagesContainerRef.current?.querySelectorAll('[data-message-id]').length ?? 0;
+          more = await onLoadOlder();
+          if (chatIdRef.current !== chatId) return; // another chat was opened
+          // Wait (up to 2 s) for the new page to be drawn
+          for (let t = 0; t < 40 && (messagesContainerRef.current?.querySelectorAll('[data-message-id]').length ?? 0) <= shown; t++)
+            await new Promise((r) => setTimeout(r, 50));
+          el = find();
+        }
+      } finally {
+        findingRef.current = false;
+        setFinding(false);
+      }
+      if (chatIdRef.current !== chatId) return;
+    }
+    // Not in this chat's history (e.g. cleared from your view with Clear chat), or further back than we look
+    if (!el) return setError("Couldn't find the original message. It may have been cleared from this chat.");
+    // Smooth when it's close; far away (e.g. pages back) it jumps straight there, like WhatsApp, so the reader isn't
+    // left watching a long scroll while the highlight below fades
+    const box = messagesContainerRef.current;
+    const far = !!box && Math.abs(el.getBoundingClientRect().top - box.getBoundingClientRect().top) > box.clientHeight * 2;
+    el.scrollIntoView({ block: 'center', behavior: far ? 'auto' : 'smooth' });
     setFlashId(id);
     setTimeout(() => setFlashId((f) => (f === id ? null : f)), 1600);
   }
@@ -2538,11 +2831,10 @@ function ChatPanel({
       setReplyTo(m);
       requestAnimationFrame(() => inputRef.current?.focus());
     } else if (action === 'copy') {
-      // A photo copies as the picture itself (pastes as an image, not "[image]"); anything else copies its text
-      const copied = m.type === 'image' || m.type === 'sticker'
-        ? copyImage(m.id)
-        : navigator.clipboard?.writeText(m.body);
-      copied?.catch((err) => setError(m.type === 'image' || m.type === 'sticker' ? (err as Error).message || "Couldn't copy the image" : "Couldn't copy to the clipboard"));
+      // A photo or sticker copies the picture itself (pasting it in a chat attaches it); anything else its text
+      if ((m.type === 'image' || m.type === 'sticker') && m.mediaMime) copyImage(m.id).catch((err) => setError((err as Error).message));
+      else if (!navigator.clipboard?.writeText) setError("This browser doesn't allow copying here. Select the text and press Ctrl+C instead.");
+      else navigator.clipboard.writeText(m.body).catch(() => setError("Couldn't copy to the clipboard"));
     } else if (action === 'pin' || action === 'unpin') {
       // For the whole team; past the admin's limit the server says so (PIN_LIMIT)
       setMessagePinned(m.id, action === 'pin')
@@ -2629,6 +2921,8 @@ function ChatPanel({
   // Messages, activity and internal notes in time order. While older messages aren't loaded yet, skip activity and
   // notes older than the first loaded message so they don't pile up at the top.
   const oldestLoaded = onLoadOlder && messages[0] ? messages[0].createdAt : null;
+  // Every photo in this chat, oldest first: the full-size viewer goes through them
+  const gallery = useMemo(() => galleryItems(messages, contactDisplayName(conversation.contact)), [messages, conversation.contact]);
   const stream = [
     ...messages.map((m) => ({ kind: 'message' as const, at: m.createdAt, id: m.id, m })),
     ...activity
@@ -2723,6 +3017,17 @@ function ChatPanel({
     toBottom(el);
   }, [conversation.id, lastId, chatScrollKey]);
 
+  // Opened from a search result (Messages): once this chat's messages are on screen, go to that message (loading
+  // earlier ones if it's further back) and mark it, like a quoted message. After the scroll handling above, so the
+  // usual "open at the bottom" doesn't undo it.
+  const hasMessages = messages.length > 0;
+  useEffect(() => {
+    if (!focusMessageId || !hasMessages) return;
+    onFocusDone();
+    void jumpTo(focusMessageId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusMessageId, focusNonce, hasMessages]);
+
   // Images, videos and voice notes get their height when they finish loading: stay at the bottom if the reader is there
   useEffect(() => {
     const el = messagesContainerRef.current;
@@ -2813,8 +3118,7 @@ function ChatPanel({
         dragDepth.current = 0;
         setDragging(false);
         if (!canAttach) return setError(isClosed ? 'This chat is closed. Reopen it to send files.' : windowClosed ? '24-hour window closed: only approved templates can be sent until the customer writes again.' : 'Assign this chat to yourself before sending files (New Leads → Assign to Me).');
-        const files = e.dataTransfer.files;
-        pickFile(files[0], files.length > 1);
+        pickFiles([...e.dataTransfer.files]);
       }}
       // A pasted screenshot or copied file (⌘V / Ctrl+V in the message box or anywhere in the chat) opens the same
       // preview as a chosen file; pasted text is left to the box as usual
@@ -2822,9 +3126,16 @@ function ChatPanel({
         const files = [...e.clipboardData.items].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter((f): f is File => !!f);
         if (!files.length) return;
         e.preventDefault();
+        // Writing a note: the image is attached to the note (only the team sees it), not sent to the customer
+        if (noting)
+          return void Promise.all(files.map((f) => fitPastedImage(pastedName(f))))
+            .then(addNoteFiles)
+            .catch((err) => setError((err as Error).message));
         if (!canAttach) return setError(isClosed ? 'This chat is closed. Reopen it to send files.' : windowClosed ? '24-hour window closed: only approved templates can be sent until the customer writes again.' : 'Assign this chat to yourself before sending files (New Leads → Assign to Me).');
-        const many = files.length > 1;
-        fitPastedImage(pastedName(files[0])).then((f) => pickFile(f, many), () => pickFile(pastedName(files[0]), many));
+        // An image over 5 MB is made smaller first (as a JPEG), so it can still be sent
+        Promise.all(files.map((f) => fitPastedImage(pastedName(f))))
+          .then(pickFiles)
+          .catch((err) => setError((err as Error).message));
       }}
     >
       {dragging && (
@@ -3049,6 +3360,12 @@ function ChatPanel({
         style={{ scrollbarGutter: 'stable' }}
         className="relative z-10 flex-1 min-h-0 space-y-2.5 overflow-y-auto px-6 py-4"
       >
+        {/* While earlier messages are loaded to reach a quoted message: a note pinned to the top of the chat */}
+        {finding && (
+          <div role="status" className="pointer-events-none sticky top-0 z-20 flex h-0 justify-center overflow-visible">
+            <span className="rounded-full bg-ink/85 px-3 py-1 text-[11px] font-medium text-on-primary shadow-md">Finding the original message…</span>
+          </div>
+        )}
         {onLoadOlder && (
           <div className="flex justify-center">
             <button
@@ -3059,6 +3376,8 @@ function ChatPanel({
             </button>
           </div>
         )}
+        {/* A photo opened full size can go through every photo in this chat (ImageGallery.tsx) */}
+        <ImageGalleryContext.Provider value={gallery}>
         {stream.map((item, i) => {
           // WhatsApp-style day separator (Today / Yesterday / date, in the app time zone) where the day changes
           const day = dayKey(item.at);
@@ -3106,6 +3425,7 @@ function ChatPanel({
             </Fragment>
           );
         })}
+        </ImageGalleryContext.Provider>
         {/* Replies on their way (or that failed before being saved), after the saved messages */}
         {pendingIn(pending, conversation.id).map((p) => (
           <div key={p.requestId} className="flex justify-end" data-pending-send={p.state}>
@@ -3486,13 +3806,14 @@ function ChatPanel({
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             accept={CHAT_ACCEPT}
             className="hidden"
-            aria-label="Choose a file"
+            aria-label="Choose files"
             onChange={(e) => {
-              const f = e.target.files?.[0];
+              const chosen = [...(e.target.files ?? [])];
               e.target.value = ''; // the same file can be chosen again
-              pickFile(f);
+              pickFiles(chosen);
             }}
           />
           {noting && (
@@ -3712,7 +4033,23 @@ function ChatPanel({
         )}
         </>
         ))}
-        {imageFile && <FileSendDialog file={imageFile} onSend={sendImageWithCaption} onClose={() => setImageFile(null)} />}
+        {sendFiles.length > 0 && (
+          <FileSendDialog
+            files={sendFiles}
+            onSend={sendOneFile}
+            onSent={(f) => setSendFiles((prev) => prev.filter((x) => x !== f))}
+            onRemove={(f) => {
+              setPickNotice('');
+              setSendFiles((prev) => prev.filter((x) => x !== f));
+            }}
+            onAddMore={() => fileInputRef.current?.click()}
+            notice={pickNotice}
+            onClose={() => {
+              setPickNotice('');
+              setSendFiles([]);
+            }}
+          />
+        )}
         {locationOpen && (
           <LocationDialog
             conversationId={conversation.id}

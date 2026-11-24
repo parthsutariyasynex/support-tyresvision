@@ -155,18 +155,21 @@ export function FormattedText({
   text,
   highlightTerm = '',
   mentionNames,
+  spaced = false,
   className = '',
 }: {
   text: string;
   highlightTerm?: string;
   // Notes: teammates' names, highlighted as @mentions (notes show no links, as before)
   mentionNames?: string[];
+  // A gap between lines and list items (the AI Robot's replies, so a list of products doesn't run together)
+  spaced?: boolean;
   className?: string;
 }) {
   const blocks = useMemo(() => parseFormatting(text), [text]);
   const opts = { highlightTerm, mentionNames };
   return (
-    <div className={`whitespace-pre-wrap break-words ${className}`}>
+    <div className={`whitespace-pre-wrap break-words ${spaced ? 'space-y-2 [&_li+li]:mt-2' : ''} ${className}`}>
       {blocks.map((block, i) => (
         <BlockView key={i} block={block} opts={opts} />
       ))}

@@ -39,7 +39,7 @@ describe('bold rows: unread messages or an assignment you have not opened yet', 
   });
 });
 
-describe('search box: name, number, message, label, assignee, status', () => {
+describe('search box (Chats section): name, number, label, assignee, status', () => {
   const chat = {
     contact: { id: 'c1', waId: '971501234567', name: 'Riya Sharma' },
     lastMessage: { body: 'Do you have 205/55 R16?', deletedAt: null } as any,
@@ -60,15 +60,14 @@ describe('search box: name, number, message, label, assignee, status', () => {
     assert.equal(matchesSearch(chat, '99'), false); // too short to be a number search, and not in the name
     assert.equal(matchesSearch(chat, 'priya'), false);
   });
-  test('last message text, label names and the assignee', () => {
-    assert.equal(matchesSearch(chat, '205/55'), true);
-    assert.equal(matchesSearch(chat, 'r16'), true);
+  test('label names and the assignee; message text is left to the Messages section', () => {
+    assert.equal(matchesSearch(chat, '205/55'), false); // in the last message: found under Messages, not Chats
+    assert.equal(matchesSearch(chat, 'r16'), false);
     assert.equal(matchesSearch(chat, 'vip'), true);
     assert.equal(matchesSearch(chat, 'follow'), true);
     assert.equal(matchesSearch(chat, 'nikhil'), true);
     assert.equal(matchesSearch(chat, 'nikhil'.toUpperCase()), true);
     assert.equal(matchesSearch({ ...chat, assignee: null }, 'nikhil'), false);
-    assert.equal(matchesSearch({ ...chat, lastMessage: { ...chat.lastMessage, deletedAt: '2026-10-14T10:00:00.000Z' } }, '205/55'), false); // deleted text is gone
   });
   test('status words: open / closed / unread / assigned / unassigned', () => {
     assert.equal(matchesSearch(chat, 'open'), true);

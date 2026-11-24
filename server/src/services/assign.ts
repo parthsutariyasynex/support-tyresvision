@@ -145,7 +145,14 @@ export async function assignConversation(
       .$transaction(async (tx) => {
         const result = await tx.conversation.updateMany({
           where: { id: conversationId, workspaceId, assignedToId: before.assignedToId },
-          data: { assignedToId: memberId, assigneeOpenedAt: null, assignedAt: memberId ? new Date() : null, ...(actorId ? { updatedBy: actorId } : {}) },
+          // Taking a chat yourself (Assign to Me, or picking yourself in the Assign box) counts as having opened it:
+          // you've just looked at it, so it isn't "assigned to you, not opened yet" (no reminder, not bold for you)
+          data: {
+            assignedToId: memberId,
+            assigneeOpenedAt: member && actorId && member.userId === actorId ? new Date() : null,
+            assignedAt: memberId ? new Date() : null,
+            ...(actorId ? { updatedBy: actorId } : {}),
+          },
         });
         if (result.count) await recordAssignment(tx, { workspaceId, conversationId, previous, next: member, actor, reason });
         return result;

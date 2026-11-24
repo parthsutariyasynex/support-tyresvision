@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseYmd } from '@/lib/dateRange';
 import { type ReportPreset, daysBetween, longDay, reportPresetRange, shortDay, weekdayName } from '@/lib/reportRange';
 import { type ConversationReport as Report, dayEndIso, dayStartIso, fetchConversationReport } from '@/lib/reports';
+import { contactCountry } from '@/lib/profileOptions';
 import { revalidateOnReturn } from '@/lib/revalidate';
 import { addDays, dayKey } from '@/lib/time';
 import { ReportDateRangePicker } from '../ReportDateRangePicker';
+import { CountryFilter } from './CountryFilter';
 
 const PAGE_SIZE = 20;
+type TableView = 'country' | 'stage';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
 // are won and lost now. Chart by day (by week or month for long ranges), then a day-by-day table by lifecycle stage.
@@ -19,45 +22,116 @@ export function ConversationReport() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  // "New customers by day" table: columns by lifecycle stage (shown first, every time the page opens) or by country
+  const [view, setView] = useState<TableView>('stage');
+  // Country code filter (ISO codes); empty = all countries
+  const [countries, setCountries] = useState<string[]>([]);
 
+  // Ticking several countries quickly starts several loads: only the newest one may update the page
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
-      setReport(await fetchConversationReport({ from: dayStartIso(range.from)!, to: dayEndIso(range.to)! }));
+      const next = await fetchConversationReport({ from: dayStartIso(range.from)!, to: dayEndIso(range.to)!, countries });
+      if (seq === loadSeq.current) setReport(next);
     } catch (err) {
-      setError((err as Error).message);
+      if (seq === loadSeq.current) setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  }, [range]);
+  }, [range, countries]);
 
   useEffect(() => {
     load();
     return revalidateOnReturn(load);
   }, [load]);
 
-  useEffect(() => setPage(1), [range]);
+  useEffect(() => setPage(1), [range, countries]);
 
   const colors = report?.colors ?? { new: '#eab308', won: '#16a34a', lost: '#dc2626' };
   const labels = report?.labels ?? { won: 'Won', lost: 'Lost' };
-  const stages = report?.stages ?? [];
   const pct = (n: number) => (report?.totalNew ? Math.round((n / report.totalNew) * 100) : 0);
 
-  // Table: one row per day that had new customers (newest first): how many arrived that day, and how many of them
-  // are on each lifecycle stage now
-  const rows = useMemo(() => {
-    if (!report) return [];
-    const byDay = new Map<string, { day: string; total: number; stages: Record<string, number> }>();
+  // Table: one row per day that had new customers (newest first): how many arrived that day, how many from each
+  // country (by their WhatsApp number), and how many of them are won now / anything else (Others = Total − Won).
+  // Only countries with customers in the range get a column, most customers first.
+  const { rows, countryCols, totalOthers } = useMemo(() => {
+    if (!report) return { rows: [], countryCols: [], totalOthers: 0 };
+    const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number>; stages: Record<string, number> }>();
+    const cols = new Map<string, { key: string; name: string; flag: string | null; count: number }>();
     for (const c of report.customers) {
       const day = dayKey(c.createdAt);
       let row = byDay.get(day);
-      if (!row) byDay.set(day, (row = { day, total: 0, stages: {} }));
+      if (!row) byDay.set(day, (row = { day, total: 0, won: 0, countries: {}, stages: {} }));
       row.total++;
+      if (c.outcome === 'won') row.won++;
       if (c.stage) row.stages[c.stage] = (row.stages[c.stage] ?? 0) + 1;
+      const country = contactCountry(null, c.waId);
+      const key = country?.name ?? '';
+      let col = cols.get(key);
+      if (!col) cols.set(key, (col = { key, name: country?.name ?? 'Unknown', flag: country?.flag ?? null, count: 0 }));
+      col.count++;
+      row.countries[key] = (row.countries[key] ?? 0) + 1;
     }
-    return [...byDay.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
+    return {
+      rows: [...byDay.values()].sort((a, b) => (a.day < b.day ? 1 : -1)),
+      // Most customers first; Unknown (a number no country matches) last
+      countryCols: [...cols.values()].sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
+      totalOthers: report.totalNew - report.totalWon,
+    };
   }, [report]);
+  // The table's columns after Day / Date / Total: by country (then Won and Others), or by lifecycle stage (every
+  // stage in Settings order, each in its colour). Both come from the same data, so switching is instant.
+  type Row = (typeof rows)[number];
+  type Col = { key: string; header: React.ReactNode; title?: string; cell: (r: Row) => number; total: number; color?: string; divider?: boolean };
+  const columns: Col[] =
+    view === 'country'
+      ? [
+          ...countryCols.map((col) => ({
+            key: `c:${col.key}`,
+            // The country's flag only; its name on hover (and for screen readers). No flag (unknown country): "Unknown"
+            header: col.flag ? (
+              <span className="text-base leading-none normal-case" role="img" aria-label={col.name}>
+                {col.flag}
+              </span>
+            ) : (
+              col.name
+            ),
+            title: col.name,
+            cell: (r: Row) => r.countries[col.key] ?? 0,
+            total: col.count,
+          })),
+          {
+            key: 'won',
+            header: (
+              <>
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors.won }} />
+                {labels.won}
+              </>
+            ),
+            cell: (r: Row) => r.won,
+            total: report?.totalWon ?? 0,
+            color: colors.won,
+            divider: true,
+          },
+          { key: 'others', header: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
+        ]
+      : (report?.stages ?? []).map((st) => ({
+          key: `s:${st.value}`,
+          header: (
+            <>
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: st.color }} />
+              {st.label}
+            </>
+          ),
+          cell: (r: Row) => r.stages[st.value] ?? 0,
+          total: st.count,
+          color: st.color,
+        }));
+  const tableCols = 3 + columns.length;
+  const cellPad = (i: number) => (i === columns.length - 1 ? 'pl-3 pr-5' : 'px-3');
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageRows = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -81,7 +155,9 @@ export function ConversationReport() {
             </div>
             <p className="mt-1 text-xs text-muted">New customers whose first chat started in the selected dates, and how many of them were won or lost.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2.5">
+          {/* One line on wide screens: country, dates, refresh (the description on the left wraps instead) */}
+          <div className="flex flex-wrap items-center gap-2.5 lg:shrink-0 lg:flex-nowrap">
+            <CountryFilter value={countries} onChange={setCountries} />
             <ReportDateRangePicker
               value={range}
               preset={preset}
@@ -94,16 +170,16 @@ export function ConversationReport() {
               type="button"
               disabled={loading}
               onClick={load}
-              title="Refresh report data"
-              className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-2 text-xs font-semibold text-body transition hover:bg-surface-strong disabled:opacity-50"
+              title={loading ? 'Updating…' : 'Refresh report data'}
+              aria-label={loading ? 'Updating report data' : 'Refresh report data'}
+              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-body transition hover:bg-surface-strong disabled:opacity-50"
             >
-              <svg className={`h-3.5 w-3.5 ${loading ? 'animate-spin text-primary' : 'text-muted'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg className={`h-4 w-4 ${loading ? 'animate-spin text-primary' : 'text-muted'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                 <path d="M3 3v5h5" />
                 <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
                 <path d="M16 21h5v-5" />
               </svg>
-              <span>{loading ? 'Updating…' : 'Refresh'}</span>
             </button>
           </div>
         </div>
@@ -148,11 +224,35 @@ export function ConversationReport() {
         )}
       </section>
 
-      {/* Day-by-day table: new customers per day and where they are now, by lifecycle stage */}
+      {/* Day-by-day table: new customers per day, by country (with Won and Others) or by lifecycle stage */}
       <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft px-5 py-3.5">
-          <h3 className="text-sm font-bold text-ink">New customers by day</h3>
-          <p className="text-[11px] text-muted">Each stage column counts that day&apos;s new customers who are on that stage now</p>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line-soft px-5 py-3.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-sm font-bold text-ink">New customers by day</h3>
+            <div role="group" aria-label="Show the table" className="flex rounded-lg border border-line bg-surface-muted p-0.5 text-[11px] font-semibold">
+              {(
+                [
+                  ['stage', 'By lifecycle stage'],
+                  ['country', 'By country'],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  onClick={() => setView(v)}
+                  className={`rounded-md px-3 py-1 transition ${view === v ? 'bg-surface text-primary shadow-2xs' : 'text-body-soft hover:text-ink'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-[11px] text-muted">
+            {view === 'country'
+              ? `Country columns count that day's new customers by their number's country; ${labels.won} and Others are where they are now`
+              : "Each stage column counts that day's new customers who are on that stage now"}
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -161,13 +261,10 @@ export function ConversationReport() {
                 <th className="whitespace-nowrap py-3 pl-5 pr-3">Day of week</th>
                 <th className="whitespace-nowrap px-3 py-3">Date</th>
                 <th className="whitespace-nowrap px-3 py-3 text-center">Total</th>
-                {/* One column per lifecycle stage (Settings → Customer lifecycle) */}
-                {stages.map((st, i) => (
-                  <th key={st.value} className={`whitespace-nowrap py-3 text-center ${i === stages.length - 1 ? 'pl-3 pr-5' : 'px-3'}`}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: st.color }} />
-                      {st.label}
-                    </span>
+                {/* By country: countries with new customers in these dates, then Won and Others; by stage: every stage */}
+                {columns.map((col, i) => (
+                  <th key={col.key} title={col.title} className={`whitespace-nowrap py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                    <span className="inline-flex items-center gap-1.5">{col.header}</span>
                   </th>
                 ))}
               </tr>
@@ -175,14 +272,14 @@ export function ConversationReport() {
             <tbody className="divide-y divide-line-soft">
               {!report && !error && (
                 <tr>
-                  <td colSpan={3 + stages.length} className="py-12 text-center text-muted">
+                  <td colSpan={tableCols} className="py-12 text-center text-muted">
                     Loading…
                   </td>
                 </tr>
               )}
               {report && rows.length === 0 && (
                 <tr>
-                  <td colSpan={3 + stages.length} className="py-12 text-center text-muted">
+                  <td colSpan={tableCols} className="py-12 text-center text-muted">
                     <p className="font-semibold text-ink">No new customers</p>
                     <p className="mt-1 text-[11px]">Nobody started a first chat in the selected dates.</p>
                   </td>
@@ -193,9 +290,9 @@ export function ConversationReport() {
                   <td className="whitespace-nowrap py-3 pl-5 pr-3 font-semibold text-ink">{weekdayName(r.day)}</td>
                   <td className="whitespace-nowrap px-3 py-3 font-medium text-ink">{longDay(r.day)}</td>
                   <td className="px-3 py-3 text-center text-sm font-bold text-ink tabular-nums">{r.total}</td>
-                  {stages.map((st, i) => (
-                    <td key={st.value} className={`py-3 text-center ${i === stages.length - 1 ? 'pl-3 pr-5' : 'px-3'}`}>
-                      <StageCount n={r.stages[st.value] ?? 0} color={st.color} />
+                  {columns.map((col, i) => (
+                    <td key={col.key} className={`py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                      <Count n={col.cell(r)} color={col.color} />
                     </td>
                   ))}
                 </tr>
@@ -209,9 +306,9 @@ export function ConversationReport() {
                     Total ({rows.length} {rows.length === 1 ? 'day' : 'days'})
                   </td>
                   <td className="px-3 py-3 text-center text-sm font-bold text-ink tabular-nums">{report.totalNew}</td>
-                  {stages.map((st, i) => (
-                    <td key={st.value} className={`py-3 text-center ${i === stages.length - 1 ? 'pl-3 pr-5' : 'px-3'}`}>
-                      <StageCount n={st.count} color={st.color} />
+                  {columns.map((col, i) => (
+                    <td key={col.key} className={`py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                      <Count n={col.total} color={col.color} />
                     </td>
                   ))}
                 </tr>
@@ -244,9 +341,15 @@ export function ConversationReport() {
   );
 }
 
-// A stage's count in the table: the number in the stage's colour, or a dash for none
-function StageCount({ n, color }: { n: number; color: string }) {
+// A count in the table: a pill (in the Won stage's colour for Won, neutral otherwise), or a dash for none
+function Count({ n, color }: { n: number; color?: string }) {
   if (!n) return <span className="text-line-strong">–</span>;
+  if (!color)
+    return (
+      <span className="inline-flex min-w-7 items-center justify-center rounded-full bg-surface-muted px-2 py-0.5 text-xs font-bold text-ink tabular-nums ring-1 ring-line ring-inset">
+        {n}
+      </span>
+    );
   return (
     <span
       className="inline-flex min-w-7 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums"

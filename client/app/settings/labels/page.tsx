@@ -84,7 +84,7 @@ function Labels() {
 
   const iconButton = 'flex h-8 w-8 items-center justify-center rounded-lg text-body-soft transition hover:bg-surface-muted hover:text-ink';
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex w-full max-w-xs items-center gap-2 rounded-lg border border-line bg-surface px-3 focus-within:border-primary">
           <svg className="h-4 w-4 shrink-0 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">

@@ -29,7 +29,7 @@ describe('chat list "Filter by" menu', () => {
   test('nothing selected matches everything and counts zero', () => {
     assert.equal(matchesMenuFilters(chat, EMPTY_MENU_FILTERS), true);
     assert.equal(activeFilterCount(EMPTY_MENU_FILTERS), 0);
-    assert.deepEqual(toServerFilter(EMPTY_MENU_FILTERS), { labelIds: null, assigneeIds: null, from: null, to: null, leadStages: null, countries: null });
+    assert.deepEqual(toServerFilter(EMPTY_MENU_FILTERS), { labelIds: null, assigneeIds: null, from: null, to: null, createdFrom: null, createdTo: null, leadStages: null, countries: null });
   });
   test('labels: any of the chosen', () => {
     assert.equal(matchesMenuFilters(chat, f({ labelIds: ['l-vip'] })), true);
@@ -46,7 +46,7 @@ describe('chat list "Filter by" menu', () => {
     inEveryMachineZone(() => {
       assert.equal(dayStart('2026-10-21'), '2026-10-20T20:00:00.000Z');
       assert.equal(dayEnd('2026-10-21'), '2026-10-21T19:59:59.999Z');
-      assert.deepEqual(toServerFilter(f({ from: '2026-10-01', to: '2026-10-02' })), { labelIds: null, assigneeIds: null, from: '2026-09-30T20:00:00.000Z', to: '2026-10-02T19:59:59.999Z', leadStages: null, countries: null });
+      assert.deepEqual(toServerFilter(f({ from: '2026-10-01', to: '2026-10-02' })), { labelIds: null, assigneeIds: null, from: '2026-09-30T20:00:00.000Z', to: '2026-10-02T19:59:59.999Z', createdFrom: null, createdTo: null, leadStages: null, countries: null });
       // 00:30 on 11 Oct in Dubai (still the 10th in UTC, and already 02:00 on the 11th in India)
       const late = { ...chat, lastMessageAt: '2026-10-10T20:30:00.000Z' };
       assert.equal(matchesMenuFilters(late, f({ from: '2026-10-11', to: '2026-10-11' })), true);
@@ -61,6 +61,19 @@ describe('chat list "Filter by" menu', () => {
     assert.equal(matchesMenuFilters(chat, f({ from: '2026-10-11' })), false);
     assert.equal(matchesMenuFilters(chat, f({ to: '2026-10-09' })), false);
     assert.equal(matchesMenuFilters(chat, f({ from: '2026-10-01' })), true);
+  });
+  test('created date: when the chat was created, not its last activity; whole Dubai days', () => {
+    const old = { ...chat, createdAt: '2026-09-01T06:00:00.000Z' }; // created 1 Sep, last activity 10 Oct
+    assert.equal(matchesMenuFilters(old, f({ createdFrom: '2026-09-01', createdTo: '2026-09-01' })), true);
+    assert.equal(matchesMenuFilters(old, f({ createdFrom: '2026-10-10', createdTo: '2026-10-10' })), false); // active that day, not created
+    assert.equal(matchesMenuFilters(old, f({ from: '2026-10-10', to: '2026-10-10' })), true); // the activity range still finds it
+    assert.equal(matchesMenuFilters({ ...old, createdAt: '2026-08-31T21:30:00.000Z' }, f({ createdFrom: '2026-09-01' })), true); // 01:30 on 1 Sep in Dubai
+    assert.equal(matchesMenuFilters(old, f({ createdTo: '2026-08-31' })), false);
+    assert.equal(activeFilterCount(f({ from: '2026-10-01', createdFrom: '2026-09-01' })), 2);
+    const server = toServerFilter(f({ createdFrom: '2026-09-01', createdTo: '2026-09-30' }));
+    assert.equal(server.createdFrom, '2026-08-31T20:00:00.000Z');
+    assert.equal(server.createdTo, '2026-09-30T19:59:59.999Z');
+    assert.equal(server.from, null);
   });
   test('stage: any of the chosen lifecycle stages; a customer without a stage never matches', () => {
     assert.equal(matchesMenuFilters(chat, f({ leadStages: ['new'] })), true);

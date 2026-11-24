@@ -140,18 +140,3 @@ export const mentionedYouText = (e: MentionEvent) => ({
   detail: `${e.contactName} · ${e.text}`,
 });
 
-export type ReminderEvent = { at: string; chats: { conversationId: string; contactName: string; kind?: 'assigned' | 'unassigned' }[] };
-
-// assignment:reminder (per person): chats assigned to you not opened/answered, and new chats nobody has taken
-export function reminderText(e: ReminderEvent) {
-  const mine = e.chats.filter((c) => c.kind !== 'unassigned').length;
-  const waiting = e.chats.length - mine;
-  const parts: string[] = [];
-  if (mine) parts.push(mine === 1 ? '1 chat assigned to you still needs attention' : `${mine} chats assigned to you still need attention`);
-  if (waiting) parts.push(waiting === 1 ? '1 new chat is still unassigned and unread' : `${waiting} new chats are still unassigned and unread`);
-  return {
-    key: `reminder:${e.at}:${e.chats.map((c) => c.conversationId).join(',')}`,
-    message: `Reminder: ${parts.join('; ')}.`,
-    detail: e.chats.map((c) => c.contactName).join(', '),
-  };
-}

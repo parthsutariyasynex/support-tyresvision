@@ -8,3 +8,18 @@ export async function connectWhatsApp(input: { wabaId: string; phoneNumberId: st
   }`;
   return (await gql<{ connectWhatsApp: WhatsAppAccount }>(query, { input })).connectWhatsApp;
 }
+
+export type WhatsAppConnectionTest = {
+  ok: boolean;
+  displayPhone: string | null;
+  verifiedName: string | null;
+  checks: { key: string; ok: boolean; detail: string }[];
+};
+
+// Checks the details with Meta without saving anything (admins only)
+export async function testWhatsAppConnection(input: { wabaId: string; phoneNumberId: string; accessToken: string }) {
+  const query = `mutation TestWhatsAppConnection($input: ConnectWhatsAppInput!) {
+    testWhatsAppConnection(input: $input) { ok displayPhone verifiedName checks { key ok detail } }
+  }`;
+  return (await gql<{ testWhatsAppConnection: WhatsAppConnectionTest }>(query, { input })).testWhatsAppConnection;
+}

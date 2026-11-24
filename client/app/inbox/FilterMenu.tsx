@@ -10,7 +10,7 @@ import { DateRangePanel } from './DateRangePanel';
 import { LabelsPanel } from './LabelsPanel';
 import { StagePanel } from './StagePanel';
 
-type Section = 'channel' | 'labels' | 'stage' | 'assign' | 'country' | 'date';
+type Section = 'channel' | 'labels' | 'stage' | 'assign' | 'country' | 'date' | 'created';
 
 const SECTIONS: { key: Section; label: string; icon: React.ReactNode }[] = [
   { key: 'channel', label: 'Channel', icon: <path d="M4.9 19.1a10 10 0 0 1 0-14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M19.1 4.9a10 10 0 0 1 0 14.2M12 12h.01" /> },
@@ -20,7 +20,10 @@ const SECTIONS: { key: Section; label: string; icon: React.ReactNode }[] = [
   { key: 'assign', label: 'Assign', icon: <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M16 11l2 2 4-4" /> },
   // The customer's WhatsApp number's country calling code (Gulf countries first)
   { key: 'country', label: 'Country code', icon: <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10" /> },
+  // Last activity (the chat's latest message)
   { key: 'date', label: 'Date range', icon: <path d="M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" /> },
+  // When the chat was created (its first message), whatever has happened in it since
+  { key: 'created', label: 'Created date', icon: <path d="M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM12 14v4M10 16h4" /> },
 ];
 
 const Icon = ({ children }: { children: React.ReactNode }) => (
@@ -29,7 +32,7 @@ const Icon = ({ children }: { children: React.ReactNode }) => (
   </svg>
 );
 
-// "Filter" button + "Filter by" menu (Channel, Labels, Stage, Assign, Country code, Date range) with Clear all
+// "Filter" button + "Filter by" menu (Channel, Labels, Stage, Assign, Country code, Date range, Created date) with Clear all
 export function FilterMenu({
   value,
   onChange,
@@ -59,7 +62,7 @@ export function FilterMenu({
   }, [open]);
 
   const selectedIn = (s: Section) =>
-    s === 'labels' ? value.labelIds.length : s === 'stage' ? value.leadStages.length : s === 'assign' ? value.assigneeIds.length : s === 'country' ? value.countries.length : s === 'date' ? (value.from || value.to ? 1 : 0) : 0;
+    s === 'labels' ? value.labelIds.length : s === 'stage' ? value.leadStages.length : s === 'assign' ? value.assigneeIds.length : s === 'country' ? value.countries.length : s === 'date' ? (value.from || value.to ? 1 : 0) : s === 'created' ? (value.createdFrom || value.createdTo ? 1 : 0) : 0;
 
   const check = (checked: boolean, onClick: () => void, children: React.ReactNode, key: string) => (
     <li key={key}>
@@ -129,6 +132,15 @@ export function FilterMenu({
           </div>
           {section === 'date' && (
             <DateRangePanel key={`${value.from}|${value.to}`} from={value.from} to={value.to} onApply={(r) => onChange({ ...value, ...r })} />
+          )}
+          {section === 'created' && (
+            <DateRangePanel
+              key={`created:${value.createdFrom}|${value.createdTo}`}
+              title="Created date"
+              from={value.createdFrom}
+              to={value.createdTo}
+              onApply={(r) => onChange({ ...value, createdFrom: r.from, createdTo: r.to })}
+            />
           )}
           {section === 'assign' && (
             <CollaboratorPanel assignees={assignees} selected={value.assigneeIds} onChange={(ids) => onChange({ ...value, assigneeIds: ids })} />

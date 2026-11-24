@@ -54,7 +54,7 @@ const EDITABLE: (keyof Editable)[] = [
   'routingOnlineOnly',
 ];
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-const COOLDOWNS = [1, 4, 8, 12, 24, 48, 72, 168];
+const COOLDOWNS = [1, 4, 8, 12, 24, 48, 72, 168, 720];
 const ROUTING_OPTIONS: {
   value: AutomationSettings['routingMode'];
   title: string;
@@ -121,7 +121,7 @@ function Automations({ me }: { me: Me }) {
   }, [admin, router]);
   if (!admin) return null;
   if (!saved || !form)
-    return error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p> : <div className="h-96 max-w-4xl animate-pulse rounded-xl bg-surface-strong" aria-busy="true" />;
+    return error ? <p className="rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p> : <div className="h-96 w-full animate-pulse rounded-xl bg-surface-strong" aria-busy="true" />;
 
   const set = <K extends keyof Editable>(k: K, v: Editable[K]) => setForm((f) => ({ ...f!, [k]: v }));
   const changed = EDITABLE.filter((k) => !same(form[k], saved[k]));
@@ -153,7 +153,7 @@ function Automations({ me }: { me: Me }) {
 
   return (
     <>
-      <div className="max-w-4xl">
+      <div className="w-full">
         <h2 className="text-xl font-bold text-ink">Simple automations</h2>
         <p className="mt-1 text-[13px] text-body-soft">Set up auto-replies and conversation routing from one place</p>
 
@@ -240,11 +240,14 @@ function Automations({ me }: { me: Me }) {
                   .sort((a, b) => a - b)
                   .map((h) => (
                     <option key={h} value={h}>
-                      {h === 168 ? '1 week' : `${h} ${h === 1 ? 'hour' : 'hours'}`}
+                      {h === 168 ? '1 week' : h === 720 ? '1 month' : `${h} ${h === 1 ? 'hour' : 'hours'}`}
                     </option>
                   ))}
               </select>
             </label>
+            <p className="mt-2 text-xs text-muted">
+              No automatic reply is sent while your team is already talking with the customer (a teammate or the AI Robot messaged them in the last 24 hours).
+            </p>
           </section>
 
           <section className="mt-5 rounded-xl border border-line bg-surface p-6">

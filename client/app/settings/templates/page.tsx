@@ -95,7 +95,7 @@ function Templates({ me }: { me: Me }) {
 
   const select = 'h-10 rounded-lg border border-line bg-surface px-3 text-[13px] text-body cursor-pointer';
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <p className="text-[13px] text-body-soft">
         Templates are the messages WhatsApp lets you start a chat with, or send after the 24-hour reply window has closed. Meta reviews each one before it can be
         used (usually within minutes, at most 24 hours).

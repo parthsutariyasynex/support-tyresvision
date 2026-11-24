@@ -53,6 +53,8 @@ export type Conversation = {
   contact: Contact;
   unread: number;
   lastMessageAt: string;
+  // When the chat was created ("Filter by" → Created date)
+  createdAt?: string | null;
   lastInboundAt: string | null;
   lastMessage: Message | null;
   labels: Pick<Label, 'id' | 'name' | 'color'>[];
@@ -87,7 +89,7 @@ export const PAGE_SIZE = 50;
 const BASE_MESSAGE_FIELDS = 'id conversationId direction type body status error createdAt sentById senderName editedAt deletedAt version mediaMime mediaSize mediaName customerReaction teamReaction teamReactionById automation pinnedAt';
 // Messages in a chat also bring the message they reply to (the list's last-message preview doesn't need it)
 export const MESSAGE_FIELDS = `${BASE_MESSAGE_FIELDS} replyToId replyTo { id direction type body senderName deleted mediaMime mediaName }`;
-const CONVERSATION_FIELDS = `id unread lastMessageAt lastInboundAt contact { id waId name leadStage country } lastMessage { ${BASE_MESSAGE_FIELDS} } labels { id name color } assignee { id name color userId } assigneeOpenedAt status closedAt closedById snoozedUntil pinned isCollaborator wasAssigned aiRobotState`;
+const CONVERSATION_FIELDS = `id unread lastMessageAt createdAt lastInboundAt contact { id waId name leadStage country } lastMessage { ${BASE_MESSAGE_FIELDS} } labels { id name color } assignee { id name color userId } assigneeOpenedAt status closedAt closedById snoozedUntil pinned isCollaborator wasAssigned aiRobotState`;
 
 // The search box, applied instantly to the chats already on screen while the server search (the same rule over
 // every message) refreshes the list. Case-insensitive substring over: customer name · phone digits · the last
@@ -101,7 +103,8 @@ export function matchesSearch(
   const digits = term.replace(/\D/g, '');
   if ((c.contact.name || '').toLowerCase().includes(term)) return true;
   if (digits.length >= 3 && c.contact.waId.includes(digits)) return true;
-  if (!c.lastMessage?.deletedAt && (c.lastMessage?.body || '').toLowerCase().includes(term)) return true;
+  // Replaced (message text is found by the search's own "Messages" section, like WhatsApp):
+  // if (!c.lastMessage?.deletedAt && (c.lastMessage?.body || '').toLowerCase().includes(term)) return true;
   if (c.labels.some((l) => l.name.toLowerCase().includes(term))) return true;
   if (c.assignee && c.assignee.name.toLowerCase().includes(term)) return true;
   if (term === c.status) return true;
@@ -131,16 +134,42 @@ export async function fetchConversations(
     assigneeIds?: string[] | null;
     from?: string | null;
     to?: string | null;
+    createdFrom?: string | null; // "Filter by" → Created date: when the chat was created
+    createdTo?: string | null;
     leadStage?: string | null; // a lifecycle stage's value (left menu)
     leadStages?: string[] | null; // any of these stage values ("Filter by" → Stage)
     countries?: string[] | null; // customers whose number has one of these countries' calling codes ("Filter by" → Country code)
+    view?: 'unread' | 'unreplied' | null; // the list's Unread / Unreplied tab
   } = {},
 ) {
-  const query = `query Conversations($first: Int, $after: String, $labelId: ID, $assignee: ID, $status: String, $search: String, $sort: String, $labelIds: [ID!], $assigneeIds: [ID!], $from: DateTime, $to: DateTime, $leadStage: String, $leadStages: [String!], $countries: [String!]) {
-    conversations(first: $first, after: $after, labelId: $labelId, assignee: $assignee, status: $status, search: $search, sort: $sort, labelIds: $labelIds, assigneeIds: $assigneeIds, from: $from, to: $to, leadStage: $leadStage, leadStages: $leadStages, countries: $countries) { nodes { ${CONVERSATION_FIELDS} } pageInfo { hasNextPage endCursor } }
+  const query = `query Conversations($first: Int, $after: String, $labelId: ID, $assignee: ID, $status: String, $search: String, $sort: String, $labelIds: [ID!], $assigneeIds: [ID!], $from: DateTime, $to: DateTime, $createdFrom: DateTime, $createdTo: DateTime, $leadStage: String, $leadStages: [String!], $countries: [String!], $view: String) {
+    conversations(first: $first, after: $after, labelId: $labelId, assignee: $assignee, status: $status, search: $search, sort: $sort, labelIds: $labelIds, assigneeIds: $assigneeIds, from: $from, to: $to, createdFrom: $createdFrom, createdTo: $createdTo, leadStage: $leadStage, leadStages: $leadStages, countries: $countries, view: $view) { nodes { ${CONVERSATION_FIELDS} } pageInfo { hasNextPage endCursor } totalCount }
   }`;
-  return (await gql<{ conversations: Connection<Conversation> }>(query, { first: PAGE_SIZE, after, ...filter }))
+  // totalCount: every chat the filters match (the list footer's "Total Contacts"), on the first page only
+  return (await gql<{ conversations: Connection<Conversation> & { totalCount: number | null } }>(query, { first: PAGE_SIZE, after, ...filter }))
     .conversations;
+}
+
+// Search → "Messages" section (like WhatsApp): one found message with its chat
+export type MessageHit = { message: Message; conversationId: string; contactName: string | null; contactWaId: string };
+export type MessageSearchPage = Connection<MessageHit> & { totalCount: number | null; words: string[] };
+
+// Messages with all the words of `text` (any order, any case), newest first, in the chats the chat list's own filters
+// cover (the same view, status, tab and "Filter by"; the list's search and sort don't apply here)
+export async function searchMessages(
+  text: string,
+  filter: Omit<Parameters<typeof fetchConversations>[1] & object, 'search' | 'sort'>,
+  after?: string | null,
+): Promise<MessageSearchPage> {
+  const query = `query SearchMessages($text: String!, $first: Int, $after: String, $labelId: ID, $assignee: ID, $status: String, $labelIds: [ID!], $assigneeIds: [ID!], $from: DateTime, $to: DateTime, $createdFrom: DateTime, $createdTo: DateTime, $leadStage: String, $leadStages: [String!], $countries: [String!], $view: String) {
+    searchMessages(text: $text, first: $first, after: $after, labelId: $labelId, assignee: $assignee, status: $status, labelIds: $labelIds, assigneeIds: $assigneeIds, from: $from, to: $to, createdFrom: $createdFrom, createdTo: $createdTo, leadStage: $leadStage, leadStages: $leadStages, countries: $countries, view: $view) {
+      nodes { conversationId contactName contactWaId message { ${BASE_MESSAGE_FIELDS} } } pageInfo { hasNextPage endCursor } totalCount words
+    }
+  }`;
+  const { labelId, assignee, status, labelIds, assigneeIds, from, to, createdFrom, createdTo, leadStage, leadStages, countries, view } = filter;
+  return (
+    await gql<{ searchMessages: MessageSearchPage }>(query, { text, first: 20, after, labelId, assignee, status, labelIds, assigneeIds, from, to, createdFrom, createdTo, leadStage, leadStages, countries, view })
+  ).searchMessages;
 }
 
 export async function fetchConversation(id: string) {

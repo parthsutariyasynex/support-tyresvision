@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
-import { collaboratorRemovedByYouText, pinText, removedAsCollaboratorText, labelToastText, addedAsCollaboratorText, assignedToYouText, assignmentChangedText, clearToast, currentToast, isDuplicateToast, newChatText, reminderText, removedFromYouText, resetToasts, mentionedYouText, showToast } from './toasts';
+import { collaboratorRemovedByYouText, pinText, removedAsCollaboratorText, labelToastText, addedAsCollaboratorText, assignedToYouText, assignmentChangedText, clearToast, currentToast, isDuplicateToast, newChatText, removedFromYouText, resetToasts, mentionedYouText, showToast } from './toasts';
 
 const base = { conversationId: 'c1', actorId: 'u-parth', actorName: 'Parth', contactName: 'Riya', previous: null };
 
@@ -56,13 +56,6 @@ describe('toast texts', () => {
     const t = newChatText({ conversationId: 'c9', contactName: '+971500000001' });
     assert.equal(t.message, 'New chat received. It is waiting in New Leads.');
     assert.equal(t.detail, '+971500000001');
-  });
-  test('reminders: assigned, unassigned, both', () => {
-    assert.equal(reminderText({ at: 't', chats: [{ conversationId: 'a', contactName: 'A', kind: 'assigned' }] }).message, 'Reminder: 1 chat assigned to you still needs attention.');
-    assert.equal(reminderText({ at: 't', chats: [{ conversationId: 'a', contactName: 'A', kind: 'unassigned' }, { conversationId: 'b', contactName: 'B', kind: 'unassigned' }] }).message, 'Reminder: 2 new chats are still unassigned and unread.');
-    const both = reminderText({ at: 't', chats: [{ conversationId: 'a', contactName: 'A', kind: 'assigned' }, { conversationId: 'b', contactName: 'B', kind: 'unassigned' }] });
-    assert.equal(both.message, 'Reminder: 1 chat assigned to you still needs attention; 1 new chat is still unassigned and unread.');
-    assert.equal(both.detail, 'A, B');
   });
 });
 

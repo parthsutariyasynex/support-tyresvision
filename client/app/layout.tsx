@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
+import './selection.css';
 import { APP_NAME } from '@/lib/brand';
 import { FlagEmojis } from './FlagEmojis';
 

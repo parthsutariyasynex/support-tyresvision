@@ -55,7 +55,7 @@ function Roles({ me }: { me: Me }) {
       <span className="text-[12px] text-body">{v}</span>
     );
   return (
-    <div className="max-w-5xl">
+    <div className="w-full">
       <p className="text-xs text-muted">Change someone's role on User management. The owner's account can only be changed by the owner.</p>
       <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface">
         <table className="w-full text-left text-[13px]">

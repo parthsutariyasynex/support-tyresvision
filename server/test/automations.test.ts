@@ -166,6 +166,35 @@ describe('automations on incoming messages', () => {
     const before = sent.length;
     await messages.saveIncoming(ws, { waId: '971505558802', name: 'Bina Shah', type: 'text', body: 'Hello?', waMessageId: `wamid.in-${run}-2` });
     assert.equal(sent.length, before);
+
+    // The team is already talking with the customer (a message to them in the last 24 hours): no automatic reply,
+    // even once the cooldown has passed. Everything is moved 25 hours back first, so only the new message counts.
+    const dayAgo = new Date(Date.now() - (auto.TEAM_ACTIVE_HOURS + 1) * 3_600_000);
+    const quiet = async () => {
+      await prisma.conversation.update({ where: { id: c1.id }, data: { lastAutoReplyAt: dayAgo } });
+      await prisma.message.updateMany({ where: { conversationId: c1.id, direction: 'out' }, data: { createdAt: dayAgo } });
+    };
+    const ask = async (n: string) => {
+      const was = sent.length;
+      await messages.saveIncoming(ws, { waId: '971505558802', name: 'Bina Shah', type: 'text', body: 'And the price?', waMessageId: `wamid.in-${run}-team-${n}` });
+      return sent.length - was;
+    };
+    await quiet();
+    await prisma.message.create({ data: { conversationId: c1.id, direction: 'out', type: 'text', body: 'Yes, we have them', status: 'sent', sentById: a1.user.id } });
+    assert.equal(await ask('teammate'), 0, 'a teammate wrote today: no welcome in the middle of the chat');
+    await quiet();
+    await prisma.message.create({ data: { conversationId: c1.id, direction: 'out', type: 'text', body: 'Hi', status: 'sent', automation: 'ai_robot' } });
+    assert.equal(await ask('robot'), 0, 'the AI Robot counts as the team');
+    await quiet();
+    await prisma.message.create({ data: { conversationId: c1.id, direction: 'out', type: 'text', body: 'Hi', status: 'failed', sentById: a1.user.id } });
+    assert.equal(await ask('failed'), 1, 'a send WhatsApp refused never reached the customer: does not count');
+    await quiet();
+    assert.equal(await ask('quiet'), 1, 'nobody wrote in the last 24 hours and the cooldown is over: replies again');
+
+    // Cooldown up to a month (720 hours)
+    assert.equal((await auto.updateAutomationSettings(owner, { cooldownHours: 720 })).cooldownHours, 720);
+    await assert.rejects(auto.updateAutomationSettings(owner, { cooldownHours: 721 }), /Up to 720 hours \(a month\)/);
+    await auto.updateAutomationSettings(owner, { cooldownHours: 24 });
     // the next new customer goes to Agent Two, then back to Agent One
     await messages.saveIncoming(ws, { waId: '971505558803', name: 'Chen', type: 'text', body: 'Hi', waMessageId: `wamid.in-${run}-3` });
     await messages.saveIncoming(ws, { waId: '971505558804', name: 'Dev', type: 'text', body: 'Hi', waMessageId: `wamid.in-${run}-4` });

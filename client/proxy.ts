@@ -75,6 +75,7 @@ export const config = {
     '/contacts/:id',
     '/reports',
     '/conversation-reports',
+    '/contact-reports',
     '/teams',
     '/account',
     '/settings',

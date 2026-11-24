@@ -17,6 +17,7 @@ import { deleteMessage, editMessage, restoreMessage } from '../services/messageA
 import { type Quote, quoteOf, senderName } from '../services/senders.js';
 import {
   listConversations,
+  searchMessages,
   listMessages,
   markConversationRead,
   requireConversation,
@@ -95,6 +96,8 @@ export const typeDefs = /* GraphQL */ `
     contact: Contact!
     unread: Int!
     lastMessageAt: DateTime!
+    "When the chat was created (Filter by: Created date)"
+    createdAt: DateTime
     "Customer's last inbound message; free-form replies are allowed for 24h after it"
     lastInboundAt: DateTime
     lastMessage: Message
@@ -139,6 +142,25 @@ export const typeDefs = /* GraphQL */ `
   type ConversationConnection {
     nodes: [Conversation!]!
     pageInfo: PageInfo!
+    "Every chat the filters match (one per contact), for the list footer Total Contacts. Only on the first page (null on later ones)."
+    totalCount: Int
+  }
+
+  "One message found by the search (its Messages section), with its chat"
+  type MessageSearchHit {
+    message: Message!
+    conversationId: ID!
+    contactName: String
+    contactWaId: String!
+  }
+
+  type MessageSearchConnection {
+    nodes: [MessageSearchHit!]!
+    pageInfo: PageInfo!
+    "Every message found (first page only, null on later ones)"
+    totalCount: Int
+    "The words looked for, to highlight them"
+    words: [String!]!
   }
 
   "Messages oldest -> newest. Pass pageInfo.endCursor as 'after' to load older messages."
@@ -271,7 +293,9 @@ export const typeDefs = /* GraphQL */ `
 
   extend type Query {
     "Newest first. first: 1-100 (default 50). labelId: only conversations with that label. assignee: an assignee id, 'unassigned', 'me' (assigned to you), 'collaborating' (only chats you collaborate on), or 'new_leads' (open, unassigned, never assigned). status: open | closed · search: one box for everything, case-insensitive substring: customer name, phone digits, any message text, label name, assignee name, or the words open / closed / unread / assigned / unassigned"
-    conversations(first: Int, after: String, labelId: ID, assignee: ID, status: String, search: String, sort: String, labelIds: [ID!], assigneeIds: [ID!], from: DateTime, to: DateTime, leadStage: String, leadStages: [String!], countries: [String!]): ConversationConnection!
+    conversations(first: Int, after: String, labelId: ID, assignee: ID, status: String, search: String, sort: String, labelIds: [ID!], assigneeIds: [ID!], from: DateTime, to: DateTime, createdFrom: DateTime, createdTo: DateTime, leadStage: String, leadStages: [String!], countries: [String!], view: String): ConversationConnection!
+    "Search, Messages section: messages containing all the words of text (any order, any case), newest first, in the chats the same filters as conversations cover. first: 1-100 (default 50)."
+    searchMessages(text: String!, first: Int, after: String, labelId: ID, assignee: ID, status: String, labelIds: [ID!], assigneeIds: [ID!], from: DateTime, to: DateTime, createdFrom: DateTime, createdTo: DateTime, leadStage: String, leadStages: [String!], countries: [String!], view: String): MessageSearchConnection!
     conversationCounts: ConversationCounts!
     "Approved templates of the connected number, live from Meta"
     messageTemplates: [MessageTemplate!]!
@@ -332,7 +356,7 @@ export const typeDefs = /* GraphQL */ `
 `;
 
 type PageArgs = { first?: number | null; after?: string | null };
-type ConversationPageArgs = PageArgs & { labelId?: string | null; assignee?: string | null; status?: string | null; search?: string | null; sort?: string | null; labelIds?: string[] | null; assigneeIds?: string[] | null; from?: Date | null; to?: Date | null; leadStage?: string | null; leadStages?: string[] | null; countries?: string[] | null };
+type ConversationPageArgs = PageArgs & { labelId?: string | null; assignee?: string | null; status?: string | null; search?: string | null; sort?: string | null; labelIds?: string[] | null; assigneeIds?: string[] | null; from?: Date | null; to?: Date | null; createdFrom?: Date | null; createdTo?: Date | null; leadStage?: string | null; leadStages?: string[] | null; countries?: string[] | null; view?: string | null };
 const pageArgs = ({ first, after }: PageArgs) => ({ first: first ?? undefined, after: after ?? undefined });
 
 type AssigneeRefMember = { id: string; role: string; user: { id: string; name: string } };
@@ -367,15 +391,28 @@ export const resolvers = {
     needsParameters: (t: { needsParameters?: boolean }) => !!t.needsParameters,
   },
   Query: {
-    conversations: authed(async ({ labelId, assignee, status, search, sort, labelIds, assigneeIds, from, to, leadStage, leadStages, countries, ...args }: ConversationPageArgs, { workspaceId, userId }) =>
-      toConnection(
-        (await listConversations(
-          workspaceId,
-          { ...pageArgs(args), labelId: labelId ?? undefined, assignee: assignee ?? undefined, status: status ?? undefined, search: search?.trim() || undefined, sort: sort ?? undefined, labelIds: labelIds ?? undefined, assigneeIds: assigneeIds ?? undefined, from: from ?? undefined, to: to ?? undefined, leadStage: leadStage ?? undefined, leadStages: leadStages ?? undefined, countries: countries ?? undefined },
-          userId,
-        )) as Page<ConversationParent>,
-      ),
-    ),
+    conversations: authed(async ({ labelId, assignee, status, search, sort, labelIds, assigneeIds, from, to, createdFrom, createdTo, leadStage, leadStages, countries, view, ...args }: ConversationPageArgs, { workspaceId, userId }) => {
+      const page = (await listConversations(
+        workspaceId,
+        { ...pageArgs(args), labelId: labelId ?? undefined, assignee: assignee ?? undefined, status: status ?? undefined, search: search?.trim() || undefined, sort: sort ?? undefined, labelIds: labelIds ?? undefined, assigneeIds: assigneeIds ?? undefined, from: from ?? undefined, to: to ?? undefined, createdFrom: createdFrom ?? undefined, createdTo: createdTo ?? undefined, leadStage: leadStage ?? undefined, leadStages: leadStages ?? undefined, countries: countries ?? undefined, view: view ?? undefined },
+        userId,
+      )) as Page<ConversationParent> & { totalCount?: number | null };
+      // totalCount: the list footer's "Total Contacts" (first page only)
+      return { ...toConnection(page), totalCount: page.totalCount ?? null };
+    }),
+    searchMessages: authed(async ({ text, labelId, assignee, status, labelIds, assigneeIds, from, to, createdFrom, createdTo, leadStage, leadStages, countries, view, ...args }: ConversationPageArgs & { text: string }, { workspaceId, userId }) => {
+      const page = await searchMessages(
+        workspaceId,
+        { ...pageArgs(args), text, labelId: labelId ?? undefined, assignee: assignee ?? undefined, status: status ?? undefined, labelIds: labelIds ?? undefined, assigneeIds: assigneeIds ?? undefined, from: from ?? undefined, to: to ?? undefined, createdFrom: createdFrom ?? undefined, createdTo: createdTo ?? undefined, leadStage: leadStage ?? undefined, leadStages: leadStages ?? undefined, countries: countries ?? undefined, view: view ?? undefined },
+        userId,
+      );
+      return {
+        ...toConnection(page),
+        nodes: page.nodes.map((m) => ({ message: m, conversationId: m.conversationId, contactName: m.conversation.contact.name, contactWaId: m.conversation.contact.waId })),
+        totalCount: page.totalCount,
+        words: page.words,
+      };
+    }),
     conversationCounts: authed((_args, { workspaceId }) => conversationCounts(workspaceId)),
     messageTemplates: authed((_args, auth) => approvedTemplates(auth)),
     allMessageTemplates: authed((_args, auth) => allTemplates(auth)),

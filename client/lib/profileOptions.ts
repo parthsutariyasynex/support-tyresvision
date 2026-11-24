@@ -63,7 +63,22 @@ export function newChatNumber(country: CountryCode, typed: string): { waId: stri
   return { waId: e164.slice(1) };
 }
 
-export type TimeZoneOption = { value: string; label: string; offsetMinutes: number };
+// Inbox search → "Start a conversation": the searched text as a phone number (+971 55…, 971 55…, or 055… in the
+// workspace's country), or null when it isn't one. Prefills New chat with that number.
+export function phoneFromSearch(text: string, fallback: CountryCode): { country: CountryCode; national: string; label: string } | null {
+  const t = text.trim();
+  if (!/^\+?[\d\s().-]+$/.test(t)) return null;
+  const digits = t.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null;
+  const tries = t.startsWith('+') ? [`+${digits}`] : [joinPhone(fallback, digits), `+${digits}`];
+  for (const e164 of tries) {
+    const p = parsePhoneNumberFromString(e164);
+    if (p?.isValid() && p.country) return { country: p.country, national: p.nationalNumber, label: p.formatInternational() };
+  }
+  return null;
+}
+
+export type TimeZoneOption ={ value: string; label: string; offsetMinutes: number };
 
 // Browsers still list some zones under their pre-rename IANA ids (backward links in the tz database); shown and
 // saved under today's names so a search for "Kolkata" or "Kyiv" finds them

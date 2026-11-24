@@ -71,7 +71,7 @@ function SavedReplies() {
 
   const iconButton = 'flex h-8 w-8 items-center justify-center rounded-lg text-body-soft transition hover:bg-surface-muted hover:text-ink';
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <p className="text-xs text-muted">
         Type <span className="rounded bg-surface-strong px-1 font-mono">/</span> in a chat's message box to insert one of these.
         {!canManage && ' Creating, editing and deleting saved replies is for owners, admins and supervisors.'}

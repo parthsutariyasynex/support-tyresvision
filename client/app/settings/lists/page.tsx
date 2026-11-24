@@ -49,7 +49,7 @@ function Lists({ me }: { me: Me }) {
     }
   }
   return (
-    <div className="max-w-3xl">
+    <div className="w-full">
       <p className="text-xs text-muted">Add customers to lists from the Lists section of a chat's profile panel.</p>
       <form
         onSubmit={async (e) => {

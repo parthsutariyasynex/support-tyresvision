@@ -1,4 +1,5 @@
 import { listAssignmentReport } from '../services/assignmentReports.js';
+import { contactReport, type ContactReportFilter } from '../services/contactReports.js';
 import { conversationReport } from '../services/conversationReports.js';
 import { authed } from './shared.js';
 
@@ -95,11 +96,81 @@ export const typeDefs = /* GraphQL */ `
     customers: [ConversationReportCustomer!]!
   }
 
+  "A label on the customer's chat"
+  type ContactReportLabel {
+    id: ID!
+    name: String!
+    color: String!
+  }
+
+  "One of the customer's vehicles"
+  type ContactReportVehicle {
+    make: String
+    model: String
+    year: Int
+    tireSize1: String!
+    tireSize2: String
+  }
+
+  "A customer in the Contact Report"
+  type ContactReportContact {
+    "Contact id"
+    id: ID!
+    "The customer's chat (opened from the report); null if they have none"
+    conversationId: ID
+    name: String
+    waId: String!
+    "Contacted date: when the contact was created"
+    createdAt: DateTime!
+    "Lifecycle stage (value), as Settings → Customer lifecycle names and colours it; null = none"
+    stage: String
+    stageLabel: String
+    stageColor: String
+    labels: [ContactReportLabel!]!
+    "Oldest first"
+    vehicles: [ContactReportVehicle!]!
+  }
+
+  type ContactReportStage {
+    value: String!
+    label: String!
+    color: String!
+  }
+
+  "Contact Reports: one page of customers matching the filters, newest first, and the choices for the filter menus"
+  type ContactReport {
+    "How many customers match the filters (all pages)"
+    total: Int!
+    page: Int!
+    pageSize: Int!
+    contacts: [ContactReportContact!]!
+    "Every lifecycle stage, in Settings order"
+    stages: [ContactReportStage!]!
+    "Every label, A–Z"
+    labels: [ContactReportLabel!]!
+    "Every vehicle make on the workspace's customers, A–Z"
+    makes: [String!]!
+  }
+
   extend type Query {
     "Owners and admins only (FORBIDDEN otherwise). Newest first; from/to bound the assignment time; first caps the rows (max 10000)."
     assignmentReport(from: DateTime, to: DateTime, conversationId: ID, first: Int): [AssignmentRecord!]!
-    "Owners and admins only (FORBIDDEN otherwise). Customers whose first chat started between from and to."
-    conversationReport(from: DateTime!, to: DateTime!): ConversationReport!
+    "Owners and admins only (FORBIDDEN otherwise). Customers whose first chat started between from and to; countries (ISO codes, e.g. AE) keeps only customers whose WhatsApp number has one of those calling codes."
+    conversationReport(from: DateTime!, to: DateTime!, countries: [String!]): ConversationReport!
+    "Owners and admins only (FORBIDDEN otherwise). Customers matching every filter given (empty ones are ignored), newest first. search: name or number; from/to: contacted date; countries: ISO codes; stages: lifecycle stage values (__none = no stage); labelIds: the chat has any of them; make (exact), model and tyreSize (contains): any of the customer's vehicles. pageSize max 100."
+    contactReport(
+      search: String
+      from: DateTime
+      to: DateTime
+      countries: [String!]
+      stages: [String!]
+      labelIds: [ID!]
+      make: String
+      model: String
+      tyreSize: String
+      page: Int
+      pageSize: Int
+    ): ContactReport!
   }
 `;
 
@@ -109,6 +180,7 @@ export const resolvers = {
       (args: { from?: Date | null; to?: Date | null; conversationId?: string | null; first?: number | null }, auth) =>
         listAssignmentReport(auth, args),
     ),
-    conversationReport: authed((args: { from: Date; to: Date }, auth) => conversationReport(auth, args)),
+    conversationReport: authed((args: { from: Date; to: Date; countries?: string[] | null }, auth) => conversationReport(auth, args)),
+    contactReport: authed((args: ContactReportFilter, auth) => contactReport(auth, args)),
   },
 };

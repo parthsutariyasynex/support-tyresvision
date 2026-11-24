@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CAPTION_MAX, checkFile, documentLabel, downloadFile, formatSize, mediaUrl } from '@/lib/media';
 import { overLimit, tooLongText } from '@/lib/textLimits';
+import { ImageViewer } from './ImageGallery';
 import { ZoomableImage } from './ZoomableImage';
 
 // The full Unicode emoji set (emoji-picker-react): search, categories, skin tones and recently used (kept in this
@@ -109,78 +110,175 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
   );
 }
 
-// Preview of the chosen image, or a card for a document, with an optional caption, then Send
+// Up to this many files are chosen, dropped or pasted at once; each is sent as its own WhatsApp message (WhatsApp
+// has no albums: the WhatsApp app sends several photos one after another, too)
+export const SEND_FILES_MAX = 20;
+
+// Preview of the chosen files (an image, a video, or a card for a document), with an optional caption on each,
+// then Send. Several files: a strip of thumbnails to switch between them, remove one, or add more; Send sends them
+// one after another in that order. Each one sent leaves the list (onSent); if one fails, sending stops there and the
+// rest stay, so Send again carries on from the failed one.
 export function FileSendDialog({
-  file,
+  files,
   onSend,
+  onSent,
+  onRemove,
+  onAddMore,
+  notice,
   onClose,
 }: {
-  file: File;
-  onSend: (caption: string) => Promise<void>;
+  files: File[];
+  onSend: (file: File, caption: string) => Promise<void>;
+  onSent: (file: File) => void;
+  onRemove: (file: File) => void;
+  onAddMore?: () => void;
+  // Shown at the top as soon as files are chosen: why some were left out (e.g. more than SEND_FILES_MAX)
+  notice?: string;
   onClose: () => void;
 }) {
-  const [url, setUrl] = useState('');
-  const [caption, setCaption] = useState('');
-  const checked = checkFile(file, { video: true });
-  const kind = 'kind' in checked ? checked.kind : 'document';
-  const isImage = kind === 'image';
-  const title = kind === 'image' ? 'Send image' : kind === 'video' ? 'Send video' : 'Send document';
+  const [captions, setCaptions] = useState(() => new Map<File, string>());
+  const [selected, setSelected] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => {
-    if (kind === 'document') return;
-    const u = URL.createObjectURL(file);
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [file, kind]);
+  const file = selected && files.includes(selected) ? selected : files[0];
+  const caption = (file && captions.get(file)) ?? '';
+  const many = files.length > 1;
+  const kinds = files.map((f) => {
+    const r = checkFile(f, { video: true });
+    return 'kind' in r ? r.kind : 'document';
+  });
+  const kind = kinds[files.indexOf(file)] ?? 'document';
+  const noun = (k: string) => (k === 'image' ? 'image' : k === 'video' ? 'video' : 'document');
+  const title = many ? `Send ${files.length} ${kinds.every((k) => k === kinds[0]) ? `${noun(kinds[0])}s` : 'files'}` : `Send ${noun(kind)}`;
+  const url = useObjectUrl(kind === 'document' ? null : file);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !busy && onClose();
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [busy, onClose]);
 
+  const setCaption = (text: string) =>
+    setCaptions((m) => {
+      const next = new Map(m);
+      next.set(file, text);
+      return next;
+    });
+
   async function send() {
-    // Over WhatsApp's caption limit: kept as typed, not sent until it's shortened
-    if (overLimit(caption, CAPTION_MAX)) return setError(tooLongText(caption, CAPTION_MAX, "WhatsApp allows a caption of up to"));
+    // A caption over WhatsApp's limit: kept as typed, nothing sent until it's shortened (that file is shown)
+    const tooLong = files.find((f) => overLimit(captions.get(f) ?? '', CAPTION_MAX));
+    if (tooLong) {
+      setSelected(tooLong);
+      return setError(tooLongText(captions.get(tooLong) ?? '', CAPTION_MAX, 'WhatsApp allows a caption of up to'));
+    }
     setBusy(true);
     setError('');
-    try {
-      await onSend(caption);
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
+    const queue = [...files];
+    for (let i = 0; i < queue.length; i++) {
+      const f = queue[i];
+      setProgress({ done: i, total: queue.length });
+      try {
+        await onSend(f, captions.get(f) ?? '');
+        onSent(f);
+      } catch (e) {
+        setSelected(f);
+        const left = queue.length - i;
+        setError(`${queue.length > 1 ? `${f.name}: ` : ''}${(e as Error).message}${left > 1 ? ` (${left} not sent yet: press Send to try again)` : ''}`);
+        setProgress(null);
+        setBusy(false);
+        return;
+      }
     }
   }
 
-  if (typeof document === 'undefined') return null;
+  if (typeof document === 'undefined' || !file) return null;
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/50 p-4" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
       <div role="dialog" aria-label={title} className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl">
         <div className="flex items-center justify-between border-b border-line-soft px-5 py-3">
-          <h2 className="text-sm font-bold text-ink">{title}</h2>
+          <h2 className="shrink-0 text-sm font-bold text-ink">{title}</h2>
           <span className="truncate pl-3 text-[11px] text-muted">
             {file.name} · {formatSize(file.size)}
           </span>
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center bg-surface-muted p-4">
-          {isImage ? (
+          {kind === 'image' ? (
             url && <img src={url} alt="Image to send" className="max-h-[50vh] max-w-full rounded-lg object-contain shadow-xs" />
           ) : kind === 'video' ? (
-            url && <video src={url} controls preload="metadata" className="max-h-[50vh] max-w-full rounded-lg bg-ink shadow-xs" aria-label="Video to send" />
+            url && <video key={url} src={url} controls preload="metadata" className="max-h-[50vh] max-w-full rounded-lg bg-ink shadow-xs" aria-label="Video to send" />
           ) : (
             <div className="flex w-full max-w-sm items-center gap-3 rounded-xl bg-surface px-4 py-3.5 shadow-xs">
-              <DocIcon label={documentLabel('type' in checked ? checked.type : file.type, file.name)} />
+              <DocIcon label={documentLabel(file.type, file.name)} />
               <div className="min-w-0">
                 <p className="truncate text-[13px] font-semibold text-ink" title={file.name}>
                   {file.name}
                 </p>
                 <p className="text-[11px] text-muted">
-                  {documentLabel('type' in checked ? checked.type : file.type, file.name)} · {formatSize(file.size)}
+                  {documentLabel(file.type, file.name)} · {formatSize(file.size)}
                 </p>
               </div>
             </div>
           )}
         </div>
+        {/* The chosen files: click one to see it and write its caption; ✕ leaves it out; + adds more */}
+        {(many || onAddMore) && (
+          <div className="border-t border-line-soft px-4 pb-2.5 pt-2">
+          {/* How many of the most that can go at once */}
+          <p className="mb-2 flex items-center justify-between text-[11px] text-muted">
+            <span>Up to {SEND_FILES_MAX} files at a time</span>
+            <span className={`font-semibold tabular-nums ${files.length >= SEND_FILES_MAX ? 'text-warning' : ''}`}>
+              {files.length} / {SEND_FILES_MAX}
+            </span>
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {files.map((f, i) => (
+              <div key={`${f.name}-${f.size}-${f.lastModified}-${i}`} className="group relative shrink-0">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setSelected(f)}
+                  title={f.name}
+                  aria-label={`Show ${f.name}`}
+                  aria-pressed={f === file}
+                  className={`block h-12 w-12 overflow-hidden rounded-lg border-2 bg-surface-muted ${f === file ? 'border-primary' : 'border-transparent hover:border-line-strong'}`}
+                >
+                  <Thumb file={f} kind={kinds[i]} />
+                </button>
+                {many && !busy && (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(f)}
+                    title="Leave this one out"
+                    aria-label={`Remove ${f.name}`}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-[10px] text-on-primary opacity-0 shadow transition group-hover:opacity-100 focus:opacity-100"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+            {onAddMore && files.length < SEND_FILES_MAX && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onAddMore}
+                title={`Add more (up to ${SEND_FILES_MAX})`}
+                aria-label="Add more files"
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border-2 border-dashed border-line-strong text-lg text-muted hover:border-primary hover:text-primary disabled:opacity-50"
+              >
+                +
+              </button>
+            )}
+          </div>
+          </div>
+        )}
+        {notice && (
+          <p role="status" className="mx-4 mt-1 rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">
+            {notice}
+          </p>
+        )}
         <div className="border-t border-line-soft p-4">
           <textarea
             value={caption}
@@ -193,9 +291,10 @@ export function FileSendDialog({
             }}
             rows={2}
             autoFocus
-            placeholder="Add a caption (optional)"
+            disabled={busy}
+            placeholder={many ? 'Add a caption to this one (optional)' : 'Add a caption (optional)'}
             aria-label="Caption"
-            className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-xs text-ink outline-hidden placeholder:text-faint focus:border-primary focus:ring-1 focus:ring-primary"
+            className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2 text-xs text-ink outline-hidden placeholder:text-faint focus:border-primary focus:ring-1 focus:ring-primary disabled:opacity-60"
           />
           {error && <p className="mt-2 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p>}
           {!error && overLimit(caption, CAPTION_MAX) && (
@@ -208,7 +307,7 @@ export function FileSendDialog({
               Cancel
             </button>
             <button type="button" disabled={busy} onClick={send} className="rounded-lg bg-primary px-5 py-1.5 text-xs font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-60">
-              {busy ? 'Sending…' : 'Send'}
+              {busy ? (progress && progress.total > 1 ? `Sending ${progress.done + 1} of ${progress.total}…` : 'Sending…') : many ? `Send ${files.length}` : 'Send'}
             </button>
           </div>
         </div>
@@ -216,6 +315,26 @@ export function FileSendDialog({
     </div>,
     document.body,
   );
+}
+
+// A temporary address for showing a chosen file (released when it changes or leaves)
+function useObjectUrl(file: File | null | undefined) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    if (!file) return setUrl('');
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return url;
+}
+
+// A thumbnail in the file strip: the picture, a ▶ for a video, the document's type for a document
+function Thumb({ file, kind }: { file: File; kind: string }) {
+  const url = useObjectUrl(kind === 'image' ? file : null);
+  if (kind === 'image') return url ? <img src={url} alt="" className="h-full w-full object-cover" /> : null;
+  if (kind === 'video') return <span className="flex h-full w-full items-center justify-center bg-ink/80 text-sm text-on-primary">▶</span>;
+  return <span className="flex h-full w-full items-center justify-center px-0.5 text-center text-[9px] font-bold uppercase text-muted">{documentLabel(file.type, file.name).split(' ')[0]}</span>;
 }
 
 // An image message in a chat bubble: loaded with the sign-in token; click opens it full size
@@ -240,17 +359,8 @@ export function ChatImage({ messageId }: { messageId: string }) {
       <button type="button" onClick={() => setFull(true)} title="View full size" className="block overflow-hidden rounded-lg">
         <img src={src} alt="Image" className="max-h-64 max-w-[260px] object-cover" />
       </button>
-      {full &&
-        createPortal(
-          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/80 p-6" role="dialog" aria-label="Image">
-            {/* Zoom with the wheel, a pinch or a double-click/tap; a click beside the picture closes */}
-            <ZoomableImage src={src} alt="Image, full size" onBackdropClick={() => setFull(false)} />
-            <button type="button" onClick={() => setFull(false)} aria-label="Close" className="absolute right-5 top-5 z-10 rounded-full bg-ink/70 px-3 py-1.5 text-sm text-on-primary shadow-lg hover:bg-ink/90">
-              ✕
-            </button>
-          </div>,
-          document.body,
-        )}
+      {/* Full size, with the chat's other photos below and ‹ › to go through them (ImageGallery.tsx) */}
+      {full && <ImageViewer startId={messageId} onClose={() => setFull(false)} />}
     </>
   );
 }

@@ -18,28 +18,28 @@ Server ફોલ્ડરમાં ૨ અલગ `.env` ફાઈલો બન�
 ### `server/.env.tyrescart`
 ```env
 PORT=5000
-DATABASE_URL="mysql://crmtcusr:YTNWEv8Uflnp8rllCJRv@localhost:3306/crmtcdb"
-JWT_SECRET=4883e3803f8445389ffc84902ef41ba92141295d30011a284d49cad4026435eb
+DATABASE_URL="mysql://crmtcusr:<DB_PASSWORD>@localhost:3306/crmtcdb"
+JWT_SECRET=<generate: openssl rand -hex 32>
 WEB_ORIGIN=https://support.tyrescart.ae
 APP_URL=https://support.tyrescart.ae
 NEXT_PUBLIC_APP_NAME="TyresCart Support"
 NEXT_PUBLIC_THEME="tyrescart"
 META_APP_SECRET=
-META_VERIFY_TOKEN=5effe6de41cadf80ba5ce431491745921025e8c0b9e88d27
+META_VERIFY_TOKEN=<your verify token>
 GRAPH_API_VERSION=v21.0
 ```
 
 ### `server/.env.tyresvision`
 ```env
 PORT=5001
-DATABASE_URL="mysql://supportusr:oUNi3J2ezyNoKerOPkw3@localhost:3306/supportdb"
-JWT_SECRET=4883e3803f8445389ffc84902ef41ba92141295d30011a284d49cad4026435eb
+DATABASE_URL="mysql://supportusr:<DB_PASSWORD>@localhost:3306/supportdb"
+JWT_SECRET=<generate: openssl rand -hex 32>
 WEB_ORIGIN=https://support.tyresvision.ae
 APP_URL=https://support.tyresvision.ae
 NEXT_PUBLIC_APP_NAME="TyresVision Support"
 NEXT_PUBLIC_THEME="tyresvision"
 META_APP_SECRET=
-META_VERIFY_TOKEN=5effe6de41cadf80ba5ce431491745921025e8c0b9e88d27
+META_VERIFY_TOKEN=<your verify token>
 GRAPH_API_VERSION=v21.0
 ```
 
@@ -216,10 +216,10 @@ sudo certbot --nginx -d support.tyrescart.ae -d support.tyresvision.ae
 
 * **TyresCart App Webhook:**
   * Callback URL: `https://support.tyrescart.ae/webhook`
-  * Verify Token: `5effe6de41cadf80ba5ce431491745921025e8c0b9e88d27`
+  * Verify Token: `<same value as META_VERIFY_TOKEN in that site's .env>`
 * **TyresVision App Webhook:**
   * Callback URL: `https://support.tyresvision.ae/webhook`
-  * Verify Token: `5effe6de41cadf80ba5ce431491745921025e8c0b9e88d27`
+  * Verify Token: `<same value as META_VERIFY_TOKEN in that site's .env>`
 
 ---
 
