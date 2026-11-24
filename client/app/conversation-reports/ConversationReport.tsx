@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { parseYmd } from '@/lib/dateRange';
 import { type ReportPreset, daysBetween, longDay, reportPresetRange, shortDay, weekdayName } from '@/lib/reportRange';
 import { type ConversationReport as Report, dayEndIso, dayStartIso, fetchConversationReport } from '@/lib/reports';
@@ -11,6 +12,8 @@ import { ReportDateRangePicker } from '../ReportDateRangePicker';
 import { CountryFilter } from './CountryFilter';
 
 const PAGE_SIZE = 20;
+const VIEW_KEY = 'support:conversationReportView';
+type TableView = 'country' | 'stage';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
 // are won and lost now. Chart by day (by week or month for long ranges), then a day-by-day table by lifecycle stage.
@@ -21,6 +24,22 @@ export function ConversationReport() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  // "New customers by day" table: columns by country or by lifecycle stage; the last choice is remembered here
+  const [view, setView] = useState<TableView>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'stage' ? 'stage' : 'country';
+    } catch {
+      return 'country';
+    }
+  });
+  const chooseView = (v: TableView) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // private mode: not remembered
+    }
+  };
   // Country code filter (ISO codes); empty = all countries
   const [countries, setCountries] = useState<string[]>([]);
 
@@ -56,18 +75,19 @@ export function ConversationReport() {
   // Only countries with customers in the range get a column, most customers first.
   const { rows, countryCols, totalOthers } = useMemo(() => {
     if (!report) return { rows: [], countryCols: [], totalOthers: 0 };
-    const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number> }>();
-    const cols = new Map<string, { key: string; name: string; flag: string | null; count: number }>();
+    const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number>; stages: Record<string, number> }>();
+    const cols = new Map<string, { key: string; name: string; code: string | null; flag: string | null; count: number }>();
     for (const c of report.customers) {
       const day = dayKey(c.createdAt);
       let row = byDay.get(day);
-      if (!row) byDay.set(day, (row = { day, total: 0, won: 0, countries: {} }));
+      if (!row) byDay.set(day, (row = { day, total: 0, won: 0, countries: {}, stages: {} }));
       row.total++;
       if (c.outcome === 'won') row.won++;
+      if (c.stage) row.stages[c.stage] = (row.stages[c.stage] ?? 0) + 1;
       const country = contactCountry(null, c.waId);
       const key = country?.name ?? '';
       let col = cols.get(key);
-      if (!col) cols.set(key, (col = { key, name: country?.name ?? 'Unknown', flag: country?.flag ?? null, count: 0 }));
+      if (!col) cols.set(key, (col = { key, name: country?.name ?? 'Unknown', code: parsePhoneNumberFromString(`+${c.waId}`)?.country ?? null, flag: country?.flag ?? null, count: 0 }));
       col.count++;
       row.countries[key] = (row.countries[key] ?? 0) + 1;
     }
@@ -78,7 +98,55 @@ export function ConversationReport() {
       totalOthers: report.totalNew - report.totalWon,
     };
   }, [report]);
-  const tableCols = 5 + countryCols.length;
+  // The table's columns after Day / Date / Total: by country (then Won and Others), or by lifecycle stage (every
+  // stage in Settings order, each in its colour). Both come from the same data, so switching is instant.
+  type Row = (typeof rows)[number];
+  type Col = { key: string; header: React.ReactNode; title?: string; cell: (r: Row) => number; total: number; color?: string; divider?: boolean };
+  const columns: Col[] =
+    view === 'country'
+      ? [
+          ...countryCols.map((col) => ({
+            key: `c:${col.key}`,
+            // The flag and the country's two-letter code (AE); the full name on hover
+            header: (
+              <>
+                {col.flag && <span className="text-sm leading-none normal-case">{col.flag}</span>}
+                {col.code ?? col.name}
+              </>
+            ),
+            title: col.name,
+            cell: (r: Row) => r.countries[col.key] ?? 0,
+            total: col.count,
+          })),
+          {
+            key: 'won',
+            header: (
+              <>
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors.won }} />
+                {labels.won}
+              </>
+            ),
+            cell: (r: Row) => r.won,
+            total: report?.totalWon ?? 0,
+            color: colors.won,
+            divider: true,
+          },
+          { key: 'others', header: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
+        ]
+      : (report?.stages ?? []).map((st) => ({
+          key: `s:${st.value}`,
+          header: (
+            <>
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: st.color }} />
+              {st.label}
+            </>
+          ),
+          cell: (r: Row) => r.stages[st.value] ?? 0,
+          total: st.count,
+          color: st.color,
+        }));
+  const tableCols = 3 + columns.length;
+  const cellPad = (i: number) => (i === columns.length - 1 ? 'pl-3 pr-5' : 'px-3');
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageRows = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -171,12 +239,34 @@ export function ConversationReport() {
         )}
       </section>
 
-      {/* Day-by-day table: new customers per day by country, and how many of them are won now or anything else */}
+      {/* Day-by-day table: new customers per day, by country (with Won and Others) or by lifecycle stage */}
       <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-soft px-5 py-3.5">
-          <h3 className="text-sm font-bold text-ink">New customers by day</h3>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line-soft px-5 py-3.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-sm font-bold text-ink">New customers by day</h3>
+            <div role="group" aria-label="Show the table" className="flex rounded-lg border border-line bg-surface-muted p-0.5 text-[11px] font-semibold">
+              {(
+                [
+                  ['country', 'By country'],
+                  ['stage', 'By lifecycle stage'],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  onClick={() => chooseView(v)}
+                  className={`rounded-md px-3 py-1 transition ${view === v ? 'bg-surface text-primary shadow-2xs' : 'text-body-soft hover:text-ink'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <p className="text-[11px] text-muted">
-            Country columns count that day&apos;s new customers by their number&apos;s country; {labels.won} and Others are where they are now
+            {view === 'country'
+              ? `Country columns count that day's new customers by their number's country; ${labels.won} and Others are where they are now`
+              : "Each stage column counts that day's new customers who are on that stage now"}
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -186,24 +276,12 @@ export function ConversationReport() {
                 <th className="whitespace-nowrap py-3 pl-5 pr-3">Day of week</th>
                 <th className="whitespace-nowrap px-3 py-3">Date</th>
                 <th className="whitespace-nowrap px-3 py-3 text-center">Total</th>
-                {/* One column per country with new customers in these dates */}
-                {countryCols.map((col) => (
-                  <th key={col.key} className="whitespace-nowrap px-3 py-3 text-center">
-                    <span className="inline-flex items-center gap-1.5">
-                      {col.flag && <span className="text-sm leading-none normal-case">{col.flag}</span>}
-                      {col.name}
-                    </span>
+                {/* By country: countries with new customers in these dates, then Won and Others; by stage: every stage */}
+                {columns.map((col, i) => (
+                  <th key={col.key} title={col.title} className={`whitespace-nowrap py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                    <span className="inline-flex items-center gap-1.5">{col.header}</span>
                   </th>
                 ))}
-                <th className="whitespace-nowrap border-l border-line-soft px-3 py-3 text-center">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors.won }} />
-                    {labels.won}
-                  </span>
-                </th>
-                <th className="whitespace-nowrap py-3 pl-3 pr-5 text-center" title="Every other lifecycle stage (and no stage): Total minus Won">
-                  Others
-                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line-soft">
@@ -227,17 +305,11 @@ export function ConversationReport() {
                   <td className="whitespace-nowrap py-3 pl-5 pr-3 font-semibold text-ink">{weekdayName(r.day)}</td>
                   <td className="whitespace-nowrap px-3 py-3 font-medium text-ink">{longDay(r.day)}</td>
                   <td className="px-3 py-3 text-center text-sm font-bold text-ink tabular-nums">{r.total}</td>
-                  {countryCols.map((col) => (
-                    <td key={col.key} className="px-3 py-3 text-center">
-                      <Count n={r.countries[col.key] ?? 0} />
+                  {columns.map((col, i) => (
+                    <td key={col.key} className={`py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                      <Count n={col.cell(r)} color={col.color} />
                     </td>
                   ))}
-                  <td className="border-l border-line-soft px-3 py-3 text-center">
-                    <Count n={r.won} color={colors.won} />
-                  </td>
-                  <td className="py-3 pl-3 pr-5 text-center">
-                    <Count n={r.total - r.won} />
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -249,17 +321,11 @@ export function ConversationReport() {
                     Total ({rows.length} {rows.length === 1 ? 'day' : 'days'})
                   </td>
                   <td className="px-3 py-3 text-center text-sm font-bold text-ink tabular-nums">{report.totalNew}</td>
-                  {countryCols.map((col) => (
-                    <td key={col.key} className="px-3 py-3 text-center">
-                      <Count n={col.count} />
+                  {columns.map((col, i) => (
+                    <td key={col.key} className={`py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                      <Count n={col.total} color={col.color} />
                     </td>
                   ))}
-                  <td className="border-l border-line-soft px-3 py-3 text-center">
-                    <Count n={report.totalWon} color={colors.won} />
-                  </td>
-                  <td className="py-3 pl-3 pr-5 text-center">
-                    <Count n={totalOthers} />
-                  </td>
                 </tr>
               </tfoot>
             )}
