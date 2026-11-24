@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { parseYmd } from '@/lib/dateRange';
 import { type ReportPreset, daysBetween, longDay, reportPresetRange, shortDay, weekdayName } from '@/lib/reportRange';
 import { type ConversationReport as Report, dayEndIso, dayStartIso, fetchConversationReport } from '@/lib/reports';
@@ -12,7 +11,6 @@ import { ReportDateRangePicker } from '../ReportDateRangePicker';
 import { CountryFilter } from './CountryFilter';
 
 const PAGE_SIZE = 20;
-const VIEW_KEY = 'support:conversationReportView';
 type TableView = 'country' | 'stage';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
@@ -24,22 +22,8 @@ export function ConversationReport() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  // "New customers by day" table: columns by country or by lifecycle stage; the last choice is remembered here
-  const [view, setView] = useState<TableView>(() => {
-    try {
-      return localStorage.getItem(VIEW_KEY) === 'stage' ? 'stage' : 'country';
-    } catch {
-      return 'country';
-    }
-  });
-  const chooseView = (v: TableView) => {
-    setView(v);
-    try {
-      localStorage.setItem(VIEW_KEY, v);
-    } catch {
-      // private mode: not remembered
-    }
-  };
+  // "New customers by day" table: columns by lifecycle stage (shown first, every time the page opens) or by country
+  const [view, setView] = useState<TableView>('stage');
   // Country code filter (ISO codes); empty = all countries
   const [countries, setCountries] = useState<string[]>([]);
 
@@ -76,7 +60,7 @@ export function ConversationReport() {
   const { rows, countryCols, totalOthers } = useMemo(() => {
     if (!report) return { rows: [], countryCols: [], totalOthers: 0 };
     const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number>; stages: Record<string, number> }>();
-    const cols = new Map<string, { key: string; name: string; code: string | null; flag: string | null; count: number }>();
+    const cols = new Map<string, { key: string; name: string; flag: string | null; count: number }>();
     for (const c of report.customers) {
       const day = dayKey(c.createdAt);
       let row = byDay.get(day);
@@ -87,7 +71,7 @@ export function ConversationReport() {
       const country = contactCountry(null, c.waId);
       const key = country?.name ?? '';
       let col = cols.get(key);
-      if (!col) cols.set(key, (col = { key, name: country?.name ?? 'Unknown', code: parsePhoneNumberFromString(`+${c.waId}`)?.country ?? null, flag: country?.flag ?? null, count: 0 }));
+      if (!col) cols.set(key, (col = { key, name: country?.name ?? 'Unknown', flag: country?.flag ?? null, count: 0 }));
       col.count++;
       row.countries[key] = (row.countries[key] ?? 0) + 1;
     }
@@ -107,12 +91,13 @@ export function ConversationReport() {
       ? [
           ...countryCols.map((col) => ({
             key: `c:${col.key}`,
-            // The flag and the country's two-letter code (AE); the full name on hover
-            header: (
-              <>
-                {col.flag && <span className="text-sm leading-none normal-case">{col.flag}</span>}
-                {col.code ?? col.name}
-              </>
+            // The country's flag only; its name on hover (and for screen readers). No flag (unknown country): "Unknown"
+            header: col.flag ? (
+              <span className="text-base leading-none normal-case" role="img" aria-label={col.name}>
+                {col.flag}
+              </span>
+            ) : (
+              col.name
             ),
             title: col.name,
             cell: (r: Row) => r.countries[col.key] ?? 0,
@@ -247,15 +232,15 @@ export function ConversationReport() {
             <div role="group" aria-label="Show the table" className="flex rounded-lg border border-line bg-surface-muted p-0.5 text-[11px] font-semibold">
               {(
                 [
-                  ['country', 'By country'],
                   ['stage', 'By lifecycle stage'],
+                  ['country', 'By country'],
                 ] as const
               ).map(([v, label]) => (
                 <button
                   key={v}
                   type="button"
                   aria-pressed={view === v}
-                  onClick={() => chooseView(v)}
+                  onClick={() => setView(v)}
                   className={`rounded-md px-3 py-1 transition ${view === v ? 'bg-surface text-primary shadow-2xs' : 'text-body-soft hover:text-ink'}`}
                 >
                   {label}
