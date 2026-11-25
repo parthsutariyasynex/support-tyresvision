@@ -269,6 +269,7 @@ export function ContactReport() {
               <tr className="border-b border-line bg-surface-muted/50 text-[11px] font-semibold uppercase tracking-wider text-muted">
                 <th className="whitespace-nowrap py-3 pl-5 pr-3">Customer name</th>
                 <th className="whitespace-nowrap px-3 py-3">Customer number</th>
+                <th className="whitespace-nowrap px-3 py-3">City</th>
                 <th className="whitespace-nowrap px-3 py-3">Contacted date</th>
                 <th className="whitespace-nowrap px-3 py-3">Status</th>
                 <th className="whitespace-nowrap px-3 py-3">Label</th>
@@ -281,14 +282,14 @@ export function ContactReport() {
             <tbody className="divide-y divide-line-soft">
               {!report && !error && (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-muted">
+                  <td colSpan={10} className="py-12 text-center text-muted">
                     Loading…
                   </td>
                 </tr>
               )}
               {report && contacts.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-muted">
+                  <td colSpan={10} className="py-12 text-center text-muted">
                     <p className="font-semibold text-ink">No customers found</p>
                     <p className="mt-1 text-[11px]">{filtered ? 'No customer matches these filters.' : 'There are no customers yet.'}</p>
                   </td>
@@ -323,6 +324,7 @@ export function ContactReport() {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-body tabular-nums">+{c.waId}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-body">{c.city ?? <span className="text-faint">–</span>}</td>
                     {/* Date and time the customer was added (Dubai time, like the rest of the app) */}
                     <td className="whitespace-nowrap px-3 py-3 text-body">
                       {longDay(dayKey(c.createdAt))}

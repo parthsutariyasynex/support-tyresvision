@@ -134,6 +134,7 @@ export type ContactReportContact = {
   conversationId: string | null;
   name: string | null;
   waId: string;
+  city: string | null;
   createdAt: string;
   stage: string | null;
   stageLabel: string | null;
@@ -168,7 +169,7 @@ export async function fetchContactReport(f: ContactReportFilter) {
   const query = `query ContactReport($search: String, $from: DateTime, $to: DateTime, $countries: [String!], $stages: [String!], $labelIds: [ID!], $make: String, $model: String, $tyreSize: String, $page: Int, $pageSize: Int) {
     contactReport(search: $search, from: $from, to: $to, countries: $countries, stages: $stages, labelIds: $labelIds, make: $make, model: $model, tyreSize: $tyreSize, page: $page, pageSize: $pageSize) {
       total page pageSize
-      contacts { id conversationId name waId createdAt stage stageLabel stageColor labels { id name color } vehicles { make model year tireSize1 tireSize2 } }
+      contacts { id conversationId name waId city createdAt stage stageLabel stageColor labels { id name color } vehicles { make model year tireSize1 tireSize2 } }
       stages { value label color }
       labels { id name color }
       makes

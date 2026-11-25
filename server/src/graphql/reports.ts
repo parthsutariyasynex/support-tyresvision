@@ -120,6 +120,8 @@ export const typeDefs = /* GraphQL */ `
     conversationId: ID
     name: String
     waId: String!
+    "The City contact property (Customer City in the vehicle form); null = not set"
+    city: String
     "Contacted date: when the contact was created"
     createdAt: DateTime!
     "Lifecycle stage (value), as Settings → Customer lifecycle names and colours it; null = none"

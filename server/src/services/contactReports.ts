@@ -4,6 +4,7 @@ import { prisma } from '../prisma.js';
 import { dubaiIso } from '../time.js';
 import { csvCell } from './assignmentReports.js';
 import { countryWhere } from './conversationReports.js';
+import { CITY_KEY } from './customerCity.js';
 import { AppError } from './errors.js';
 import { listLeadStages } from './leadStages.js';
 import { requireAdmin } from './permissions.js';
@@ -116,6 +117,8 @@ async function contactRows(where: Prisma.ContactWhereInput, skip: number, take: 
         orderBy: { createdAt: 'asc' },
         select: { make: true, model: true, year: true, tireSize1: true, tireSize2: true },
       },
+      // City: the City contact property (Customer City in the vehicle form, services/customerCity.ts)
+      customValues: { where: { property: { key: CITY_KEY } }, select: { value: true }, take: 1 },
     },
   });
   const byStage = new Map(stages.map((s) => [s.value, s]));
@@ -127,6 +130,7 @@ async function contactRows(where: Prisma.ContactWhereInput, skip: number, take: 
       conversationId: chat?.id ?? null,
       name: [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || c.name || null,
       waId: c.waId,
+      city: c.customValues[0]?.value ?? null,
       createdAt: c.createdAt,
       stage: stage?.value ?? null,
       stageLabel: stage?.label ?? null,
@@ -172,7 +176,7 @@ export async function contactReport(auth: AuthPayload, filter: ContactReportFilt
 // Export CSV: every customer the filters match (not only the page on screen), newest first, one row per customer.
 // A customer with several vehicles has them in the same order in each vehicle column, separated by " | ".
 export const CONTACT_REPORT_CSV_MAX_ROWS = 50000;
-const CONTACT_CSV_COLUMNS = ['Customer name', 'Customer number', 'Contacted date (Dubai time)', 'Status', 'Labels', 'Tyre size 1', 'Tyre size 2', 'Make', 'Model', 'Year'];
+const CONTACT_CSV_COLUMNS = ['Customer name', 'Customer number', 'City', 'Contacted date (Dubai time)', 'Status', 'Labels', 'Tyre size 1', 'Tyre size 2', 'Make', 'Model', 'Year'];
 
 export async function contactReportCsv(auth: AuthPayload, filter: ContactReportFilter) {
   await requireAdmin(auth);
@@ -192,6 +196,7 @@ export async function contactReportCsv(auth: AuthPayload, filter: ContactReportF
         [
           c.name ?? '',
           c.waId, // digits with country code, as in the assignment export (a leading + would make spreadsheets read a formula)
+          c.city ?? '',
           dubaiIso(c.createdAt).slice(0, 16).replace('T', ' '),
           c.stageLabel ?? '',
           c.labels.map((l) => l.name).join(', '),
