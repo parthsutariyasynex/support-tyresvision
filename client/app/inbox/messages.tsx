@@ -67,11 +67,14 @@ export function messageActions(m: Message, viewer: { userId: string; isAdmin: bo
   // Copy: a photo or sticker copies the picture; anything else its text (never a "[video]"-style placeholder)
   if ((m.type === 'image' || m.type === 'sticker') && m.mediaMime) actions.push('copy');
   else if (m.body && !isMediaPlaceholder(m.body)) actions.push('copy');
-  const mine = m.direction === 'out' && !!viewer && (viewer.isAdmin || m.sentById === viewer.userId);
-  if (mine && m.type === 'text') actions.push('edit');
+  // Edit and Delete for everyone are turned off for now: the WhatsApp Business API can't edit or delete a message on
+  // the customer's phone, so they only changed the CRM's copy and confused the team. Everything behind them (the edit
+  // box, delete confirmation, Undo, the server side) is still there: uncomment these lines to bring them back.
+  // const mine = m.direction === 'out' && !!viewer && (viewer.isAdmin || m.sentById === viewer.userId);
+  // if (mine && m.type === 'text') actions.push('edit');
   // Pin / unpin for the whole team: owners and admins (sent messages only, not one still being sent)
   if (viewer?.isAdmin && m.status !== 'pending') actions.push(m.pinnedAt ? 'unpin' : 'pin');
-  if (mine) actions.push('delete');
+  // if (mine) actions.push('delete');
   return actions;
 }
 
