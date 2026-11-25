@@ -79,6 +79,8 @@ export type ConversationReportCustomer = {
   email: string | null;
   createdAt: string;
   outcome: ConversationOutcome;
+  // The City contact property; null = not set
+  city: string | null;
   // The customer's lifecycle stage now (its value); null = none
   stage: string | null;
   stageLabel: string | null;
@@ -105,7 +107,7 @@ export async function fetchConversationReport(range: { from: string; to: string;
       colors { new won lost }
       labels { won lost }
       stages { value label color lost isDefault count }
-      customers { id name waId email createdAt outcome stage stageLabel stageColor }
+      customers { id name waId email city createdAt outcome stage stageLabel stageColor }
     }
   }`;
   return (

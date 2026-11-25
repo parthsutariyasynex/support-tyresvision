@@ -2,6 +2,7 @@ import { type CountryCode, getCountryCallingCode, isSupportedCountry } from 'lib
 import type { AuthPayload } from '../auth.js';
 import { prisma } from '../prisma.js';
 import { AppError } from './errors.js';
+import { CITY_KEY } from './customerCity.js';
 import { listLeadStages } from './leadStages.js';
 import { requireAdmin } from './permissions.js';
 
@@ -58,7 +59,11 @@ export async function conversationReport(
     where: { workspaceId: auth.workspaceId, deletedAt: null, conversations: { some: {} }, createdAt: { gte: from, lte: to }, ...countryWhere(filter.countries) },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: CONVERSATION_REPORT_MAX_ROWS,
-    select: { id: true, name: true, firstName: true, lastName: true, waId: true, email: true, leadStage: true, createdAt: true },
+    select: {
+      id: true, name: true, firstName: true, lastName: true, waId: true, email: true, leadStage: true, createdAt: true,
+      // City: the City contact property (Customer City in the vehicle form, services/customerCity.ts)
+      customValues: { where: { property: { key: CITY_KEY } }, select: { value: true }, take: 1 },
+    },
   });
 
   const outcomeOf = (stage: string | null): Outcome =>
@@ -72,6 +77,7 @@ export async function conversationReport(
       name: fullName || c.name || null,
       waId: c.waId,
       email: c.email,
+      city: c.customValues[0]?.value ?? null,
       createdAt: c.createdAt,
       outcome: outcomeOf(c.leadStage),
       // The stage's value (Contact.leadStage); null = no stage, or one that no longer exists

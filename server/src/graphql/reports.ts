@@ -45,6 +45,8 @@ export const typeDefs = /* GraphQL */ `
     name: String
     waId: String!
     email: String
+    "The City contact property (Customer City in the vehicle form); null = not set"
+    city: String
     "When the customer (contact) was created: their first chat"
     createdAt: DateTime!
     "new (still in progress) | won | lost, from the customer's lead stage now"

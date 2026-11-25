@@ -11,7 +11,7 @@ import { ReportDateRangePicker } from '../ReportDateRangePicker';
 import { CountryFilter } from './CountryFilter';
 
 const PAGE_SIZE = 50;
-type TableView = 'country' | 'stage';
+type TableView = 'country' | 'stage' | 'city';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
 // are won and lost now. Chart by day (by week or month for long ranges), then a day-by-day table by lifecycle stage.
@@ -58,14 +58,16 @@ export function ConversationReport() {
   // Table: one row per day that had new customers (newest first): how many arrived that day, how many from each
   // country (by their WhatsApp number), and how many of them are won now / anything else (Others = Total − Won).
   // Only countries with customers in the range get a column, most customers first.
-  const { rows, countryCols, totalOthers } = useMemo(() => {
-    if (!report) return { rows: [], countryCols: [], totalOthers: 0 };
-    const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number>; stages: Record<string, number> }>();
+  const { rows, countryCols, cityCols, totalOthers } = useMemo(() => {
+    if (!report) return { rows: [], countryCols: [], cityCols: [], totalOthers: 0 };
+    const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number>; stages: Record<string, number>; cities: Record<string, number> }>();
+    // By city: the City contact property (Customer City in the vehicle form); '' = no city set
+    const cityTotals = new Map<string, number>();
     const cols = new Map<string, { key: string; name: string; flag: string | null; count: number }>();
     for (const c of report.customers) {
       const day = dayKey(c.createdAt);
       let row = byDay.get(day);
-      if (!row) byDay.set(day, (row = { day, total: 0, won: 0, countries: {}, stages: {} }));
+      if (!row) byDay.set(day, (row = { day, total: 0, won: 0, countries: {}, stages: {}, cities: {} }));
       row.total++;
       if (c.outcome === 'won') row.won++;
       if (c.stage) row.stages[c.stage] = (row.stages[c.stage] ?? 0) + 1;
@@ -75,11 +77,18 @@ export function ConversationReport() {
       if (!col) cols.set(key, (col = { key, name: country?.name ?? 'Unknown', flag: country?.flag ?? null, count: 0 }));
       col.count++;
       row.countries[key] = (row.countries[key] ?? 0) + 1;
+      const city = c.city?.trim() ?? '';
+      row.cities[city] = (row.cities[city] ?? 0) + 1;
+      cityTotals.set(city, (cityTotals.get(city) ?? 0) + 1);
     }
     return {
       rows: [...byDay.values()].sort((a, b) => (a.day < b.day ? 1 : -1)),
       // Most customers first; Unknown (a number no country matches) last
       countryCols: [...cols.values()].sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
+      // Cities with customers in these dates, most customers first; "No city" last
+      cityCols: [...cityTotals.entries()]
+        .map(([key, count]) => ({ key, name: key || 'No city', count }))
+        .sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
       totalOthers: report.totalNew - report.totalWon,
     };
   }, [report]);
@@ -87,8 +96,37 @@ export function ConversationReport() {
   // stage in Settings order, each in its colour). Both come from the same data, so switching is instant.
   type Row = (typeof rows)[number];
   type Col = { key: string; header: React.ReactNode; csv: string; title?: string; cell: (r: Row) => number; total: number; color?: string; divider?: boolean };
+  const wonAndOthers: Col[] = [
+    {
+      key: 'won',
+      header: (
+        <>
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors.won }} />
+          {labels.won}
+        </>
+      ),
+      csv: labels.won,
+      cell: (r: Row) => r.won,
+      total: report?.totalWon ?? 0,
+      color: colors.won,
+      divider: true,
+    },
+    { key: 'others', header: 'Others', csv: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
+  ];
   const columns: Col[] =
-    view === 'country'
+    view === 'city'
+      ? [
+          ...cityCols.map((col) => ({
+            key: `city:${col.key}`,
+            header: col.key ? col.name : <span className="normal-case italic text-faint">No city</span>,
+            title: col.key ? undefined : 'Customers with no City set (Customer City in the vehicle form, or the Contact property panel)',
+            csv: col.name,
+            cell: (r: Row) => r.cities[col.key] ?? 0,
+            total: col.count,
+          })),
+          ...wonAndOthers,
+        ]
+      : view === 'country'
       ? [
           ...countryCols.map((col) => ({
             key: `c:${col.key}`,
@@ -105,21 +143,7 @@ export function ConversationReport() {
             cell: (r: Row) => r.countries[col.key] ?? 0,
             total: col.count,
           })),
-          {
-            key: 'won',
-            header: (
-              <>
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors.won }} />
-                {labels.won}
-              </>
-            ),
-            csv: labels.won,
-            cell: (r: Row) => r.won,
-            total: report?.totalWon ?? 0,
-            color: colors.won,
-            divider: true,
-          },
-          { key: 'others', header: 'Others', csv: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
+          ...wonAndOthers,
         ]
       : (report?.stages ?? []).map((st) => ({
           key: `s:${st.value}`,
@@ -151,7 +175,7 @@ export function ConversationReport() {
     const csv = '\uFEFF' + lines.map((l) => l.map((v) => csvCell(String(v))).join(',')).join('\r\n') + '\r\n'; // BOM: Excel reads UTF-8
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `conversation-report-${view === 'stage' ? 'by-lifecycle-stage' : 'by-country'}-${range.from}-to-${range.to}.csv`;
+    a.download = `conversation-report-${view === 'stage' ? 'by-lifecycle-stage' : view === 'city' ? 'by-city' : 'by-country'}-${range.from}-to-${range.to}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -270,6 +294,7 @@ export function ConversationReport() {
                 [
                   ['stage', 'By lifecycle stage'],
                   ['country', 'By country'],
+                  ['city', 'By city'],
                 ] as const
               ).map(([v, label]) => (
                 <button
@@ -287,7 +312,9 @@ export function ConversationReport() {
           <p className="text-[11px] text-muted">
             {view === 'country'
               ? `Country columns count that day's new customers by their number's country; ${labels.won} and Others are where they are now`
-              : "Each stage column counts that day's new customers who are on that stage now"}
+              : view === 'city'
+                ? `City columns count that day's new customers by their City; ${labels.won} and Others are where they are now`
+                : "Each stage column counts that day's new customers who are on that stage now"}
           </p>
         </div>
         <div className="overflow-x-auto">
