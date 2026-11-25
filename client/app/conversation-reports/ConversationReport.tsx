@@ -10,7 +10,7 @@ import { addDays, dayKey } from '@/lib/time';
 import { ReportDateRangePicker } from '../ReportDateRangePicker';
 import { CountryFilter } from './CountryFilter';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 50;
 type TableView = 'country' | 'stage';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
@@ -24,6 +24,7 @@ export function ConversationReport() {
   const [page, setPage] = useState(1);
   // "New customers by day" table: columns by lifecycle stage (shown first, every time the page opens) or by country
   const [view, setView] = useState<TableView>('stage');
+  const [dateSort, setDateSort] = useState<'desc' | 'asc'>('desc');
   // Country code filter (ISO codes); empty = all countries
   const [countries, setCountries] = useState<string[]>([]);
 
@@ -85,7 +86,7 @@ export function ConversationReport() {
   // The table's columns after Day / Date / Total: by country (then Won and Others), or by lifecycle stage (every
   // stage in Settings order, each in its colour). Both come from the same data, so switching is instant.
   type Row = (typeof rows)[number];
-  type Col = { key: string; header: React.ReactNode; title?: string; cell: (r: Row) => number; total: number; color?: string; divider?: boolean };
+  type Col = { key: string; header: React.ReactNode; csv: string; title?: string; cell: (r: Row) => number; total: number; color?: string; divider?: boolean };
   const columns: Col[] =
     view === 'country'
       ? [
@@ -100,6 +101,7 @@ export function ConversationReport() {
               col.name
             ),
             title: col.name,
+            csv: col.name,
             cell: (r: Row) => r.countries[col.key] ?? 0,
             total: col.count,
           })),
@@ -111,12 +113,13 @@ export function ConversationReport() {
                 {labels.won}
               </>
             ),
+            csv: labels.won,
             cell: (r: Row) => r.won,
             total: report?.totalWon ?? 0,
             color: colors.won,
             divider: true,
           },
-          { key: 'others', header: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
+          { key: 'others', header: 'Others', csv: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
         ]
       : (report?.stages ?? []).map((st) => ({
           key: `s:${st.value}`,
@@ -126,21 +129,40 @@ export function ConversationReport() {
               {st.label}
             </>
           ),
+          csv: st.label,
           cell: (r: Row) => r.stages[st.value] ?? 0,
           total: st.count,
           color: st.color,
         }));
   const tableCols = 3 + columns.length;
   const cellPad = (i: number) => (i === columns.length - 1 ? 'pl-3 pr-5' : 'px-3');
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  // Date column: newest first, or oldest first (click the heading)
+  const sortedRows = dateSort === 'desc' ? rows : [...rows].reverse();
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const pageRows = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageRows = sortedRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  // Export CSV: the table as it's shown (this view's columns, every day of the range in the chosen order, all pages)
+  // and its Total row
+  function exportCsv() {
+    if (!report) return;
+    const head = ['Day of week', 'Date', 'Total', ...columns.map((c) => c.csv)];
+    const lines = [head, ...sortedRows.map((r) => [weekdayName(r.day), r.day, r.total, ...columns.map((c) => c.cell(r))]), ['Total', `${rows.length} days`, report.totalNew, ...columns.map((c) => c.total)]];
+    const csv = '\uFEFF' + lines.map((l) => l.map((v) => csvCell(String(v))).join(',')).join('\r\n') + '\r\n'; // BOM: Excel reads UTF-8
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `conversation-report-${view === 'stage' ? 'by-lifecycle-stage' : 'by-country'}-${range.from}-to-${range.to}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
 
   return (
     <div className="space-y-6">
       {/* Header: title, date range, refresh */}
       <section className="rounded-2xl border border-line bg-surface p-5 shadow-xs sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-soft text-primary">
@@ -156,7 +178,7 @@ export function ConversationReport() {
             <p className="mt-1 text-xs text-muted">New customers whose first chat started in the selected dates, and how many of them were won or lost.</p>
           </div>
           {/* One line on wide screens: country, dates, refresh (the description on the left wraps instead) */}
-          <div className="flex flex-wrap items-center gap-2.5 lg:shrink-0 lg:flex-nowrap">
+          <div className="flex flex-wrap items-center gap-2.5 xl:shrink-0 xl:flex-nowrap">
             <CountryFilter value={countries} onChange={setCountries} />
             <ReportDateRangePicker
               value={range}
@@ -180,6 +202,20 @@ export function ConversationReport() {
                 <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
                 <path d="M16 21h5v-5" />
               </svg>
+            </button>
+            {/* The day table below, as shown (current view, every day of the range) */}
+            <button
+              type="button"
+              disabled={!report || rows.length === 0}
+              onClick={exportCsv}
+              className="flex h-[34px] shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-xs font-semibold text-on-primary shadow-2xs transition hover:bg-primary-hover disabled:opacity-50"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>Export CSV</span>
             </button>
           </div>
         </div>
@@ -259,7 +295,22 @@ export function ConversationReport() {
             <thead>
               <tr className="border-b border-line bg-surface-muted/50 text-[11px] font-semibold uppercase tracking-wider text-muted">
                 <th className="whitespace-nowrap py-3 pl-5 pr-3">Day of week</th>
-                <th className="whitespace-nowrap px-3 py-3">Date</th>
+                <th className="whitespace-nowrap px-3 py-3" aria-sort={dateSort === 'desc' ? 'descending' : 'ascending'}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDateSort((d) => (d === 'desc' ? 'asc' : 'desc'));
+                      setPage(1);
+                    }}
+                    title={dateSort === 'desc' ? 'Newest first: click for oldest first' : 'Oldest first: click for newest first'}
+                    className="inline-flex items-center gap-1 uppercase tracking-wider hover:text-ink"
+                  >
+                    Date
+                    <svg className={`h-3 w-3 transition-transform ${dateSort === 'asc' ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 5v14M19 12l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </th>
                 <th className="whitespace-nowrap px-3 py-3 text-center">Total</th>
                 {/* By country: countries with new customers in these dates, then Won and Others; by stage: every stage */}
                 {columns.map((col, i) => (
@@ -287,11 +338,11 @@ export function ConversationReport() {
               )}
               {pageRows.map((r) => (
                 <tr key={r.day} className="align-middle transition hover:bg-surface-muted/60">
-                  <td className="whitespace-nowrap py-3 pl-5 pr-3 font-semibold text-ink">{weekdayName(r.day)}</td>
-                  <td className="whitespace-nowrap px-3 py-3 font-medium text-ink">{longDay(r.day)}</td>
-                  <td className="px-3 py-3 text-center text-sm font-bold text-ink tabular-nums">{r.total}</td>
+                  <td className="whitespace-nowrap py-1.5 pl-5 pr-3 font-semibold text-ink">{weekdayName(r.day)}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 font-medium text-ink">{longDay(r.day)}</td>
+                  <td className="px-3 py-1.5 text-center text-sm font-bold text-ink tabular-nums">{r.total}</td>
                   {columns.map((col, i) => (
-                    <td key={col.key} className={`py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                    <td key={col.key} className={`py-1.5 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
                       <Count n={col.cell(r)} color={col.color} />
                     </td>
                   ))}
@@ -346,13 +397,13 @@ function Count({ n, color }: { n: number; color?: string }) {
   if (!n) return <span className="text-line-strong">–</span>;
   if (!color)
     return (
-      <span className="inline-flex min-w-7 items-center justify-center rounded-full bg-surface-muted px-2 py-0.5 text-xs font-bold text-ink tabular-nums ring-1 ring-line ring-inset">
+      <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-surface-muted px-1.5 py-px text-xs font-bold text-ink tabular-nums ring-1 ring-line ring-inset">
         {n}
       </span>
     );
   return (
     <span
-      className="inline-flex min-w-7 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums"
+      className="inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-px text-xs font-bold tabular-nums"
       style={{ color, backgroundColor: `${color}1a`, boxShadow: `inset 0 0 0 1px ${color}55` }}
     >
       {n}
@@ -603,4 +654,11 @@ function OutcomeChart({ report, from, to, labels }: { report: Report; from: stri
       )}
     </div>
   );
+}
+
+// A CSV cell: quoted when needed; a leading =, +, -, @ gets a ' so spreadsheets don't run it as a formula
+function csvCell(value: string) {
+  let v = value;
+  if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
