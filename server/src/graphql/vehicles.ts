@@ -1,6 +1,7 @@
 import { addVehicle, deleteVehicle, listVehicles, searchVehicleCustomers, updateVehicle } from '../services/vehicles.js';
 import { addMake, addModel, addYear, listMakes, listModels, listYears } from '../services/customVehicles.js';
 import { vehicleCatalogEnabled } from '../services/vehicleCatalog.js';
+import { addCity, saveVehicleCustomerDetails, vehicleCustomerDetails } from '../services/customerCity.js';
 import { authed } from './shared.js';
 
 export const typeDefs = /* GraphQL */ `
@@ -82,7 +83,20 @@ export const typeDefs = /* GraphQL */ `
     remarks: String
   }
 
+  "Vehicle form: the customer's city (the City contact property) and email, and the city list"
+  type VehicleCustomerDetails {
+    email: String
+    city: String
+    cities: [String!]!
+  }
+  type AddCityResult {
+    city: String!
+    cities: [String!]!
+  }
+
   extend type Query {
+    "Vehicle form's Customer City and Customer Email (the City property is made with the seven emirates the first time)"
+    vehicleCustomerDetails(contactId: ID!): VehicleCustomerDetails!
     "This contact's vehicles, newest first"
     contactVehicles(contactId: ID!): [Vehicle!]!
     "Up to 20 contacts matching name, first/last name or WhatsApp number digits"
@@ -108,12 +122,17 @@ export const typeDefs = /* GraphQL */ `
     addVehicleModel(make: String!, name: String!): VehicleCatalogOption!
     "+ Add New Year for a make and model (by name)"
     addVehicleYear(make: String!, model: String!, year: Int!): Int!
+    "+ Add New City (any member). Errors: BAD_USER_INPUT, DUPLICATE (already listed)"
+    addCity(name: String!): AddCityResult!
+    "Saved with a vehicle: the customer's city (required, from the list) and email (optional; empty clears it)"
+    saveVehicleCustomerDetails(contactId: ID!, city: String!, email: String): VehicleCustomerDetails!
   }
 `;
 
 export const resolvers = {
   Query: {
     contactVehicles: authed(({ contactId }: { contactId: string }, auth) => listVehicles(auth, contactId)),
+    vehicleCustomerDetails: authed(({ contactId }: { contactId: string }, auth) => vehicleCustomerDetails(auth, contactId)),
     vehicleCustomers: authed(({ search }: { search?: string | null }, auth) => searchVehicleCustomers(auth, search)),
     vehicleCatalogEnabled: authed(async () => vehicleCatalogEnabled()),
     vehicleMakes: authed(() => listMakes()),
@@ -122,6 +141,10 @@ export const resolvers = {
   },
   Mutation: {
     addVehicle: authed(({ input }: { input: unknown }, auth) => addVehicle(auth, input)),
+    addCity: authed(({ name }: { name: string }, auth) => addCity(auth, name)),
+    saveVehicleCustomerDetails: authed(({ contactId, city, email }: { contactId: string; city: string; email?: string | null }, auth) =>
+      saveVehicleCustomerDetails(auth, contactId, city, email ?? ''),
+    ),
     updateVehicle: authed(({ id, input }: { id: string; input: unknown }, auth) => updateVehicle(auth, id, input)),
     deleteVehicle: authed(({ id }: { id: string }, auth) => deleteVehicle(auth, id)),
     addVehicleMake: authed(({ name }: { name: string }) => addMake(name)),

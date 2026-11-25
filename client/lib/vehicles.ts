@@ -109,3 +109,19 @@ export async function addVehicleYear(make: string, model: string, year: number) 
   catalogCache.delete(`years|${nameKey(make)}|${nameKey(model)}`);
   return added;
 }
+
+// Vehicle form → Customer City (the City contact property, required) and Customer Email (optional), saved with the
+// vehicle; "+ Add New City" adds one to the workspace's list
+export type VehicleCustomerDetails = { email: string | null; city: string | null; cities: string[] };
+export async function vehicleCustomerDetails(contactId: string) {
+  const query = `query VehicleCustomerDetails($id: ID!) { vehicleCustomerDetails(contactId: $id) { email city cities } }`;
+  return (await gql<{ vehicleCustomerDetails: VehicleCustomerDetails }>(query, { id: contactId })).vehicleCustomerDetails;
+}
+export async function addCity(name: string) {
+  const query = `mutation AddCity($name: String!) { addCity(name: $name) { city cities } }`;
+  return (await gql<{ addCity: { city: string; cities: string[] } }>(query, { name })).addCity;
+}
+export async function saveVehicleCustomerDetails(contactId: string, city: string, email: string) {
+  const query = `mutation SaveVehicleCustomerDetails($id: ID!, $city: String!, $email: String) { saveVehicleCustomerDetails(contactId: $id, city: $city, email: $email) { email city cities } }`;
+  return (await gql<{ saveVehicleCustomerDetails: VehicleCustomerDetails }>(query, { id: contactId, city, email })).saveVehicleCustomerDetails;
+}

@@ -12,7 +12,10 @@ import {
   type VehicleCustomer,
   VEHICLES_EVENT,
   addVehicle,
+  addCity,
   deleteVehicle,
+  saveVehicleCustomerDetails,
+  vehicleCustomerDetails,
   listVehicles,
   updateVehicle,
   vehicleMakes,
@@ -324,7 +327,7 @@ function VehicleCard({ vehicle: v, isEditing, onEdit, onDeleted }: { vehicle: Ve
   );
 }
 
-type Form = { make: string; model: string; year: string; plateNumber: string; registrationDate: string; tireSize1: string; tireSize2: string; remarks: string };
+type Form = { city: string; email: string; make: string; model: string; year: string; plateNumber: string; registrationDate: string; tireSize1: string; tireSize2: string; remarks: string };
 type Field = keyof Form;
 
 function validate(f: Form): Partial<Record<Field, string>> {
@@ -333,6 +336,8 @@ function validate(f: Form): Partial<Record<Field, string>> {
   // Make, model and year are optional; a year that's filled in must be a real one
   if (f.year.trim() && !/^\d{4}$/.test(f.year.trim())) errors.year = 'Enter a 4-digit year';
   else if (f.year.trim() && (+f.year < 1900 || +f.year > maxYear)) errors.year = `Enter a year from 1900 to ${maxYear}`;
+  if (!f.city.trim()) errors.city = 'Select the customer city';
+  if (f.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) errors.email = 'Enter a valid email address';
   if (!f.tireSize1.trim()) errors.tireSize1 = 'Select tyre size 1';
   if (f.registrationDate && f.registrationDate > localToday()) errors.registrationDate = 'The registration date can’t be in the future';
   return errors;
@@ -428,6 +433,8 @@ function VehicleForm({
   onSaved: (wasEdit: boolean) => void;
 }) {
   const [form, setForm] = useState<Form>({
+    city: '',
+    email: '',
     make: vehicle?.make ?? '',
     model: vehicle?.model ?? '',
     year: vehicle?.year != null ? String(vehicle.year) : '',
@@ -475,6 +482,29 @@ function VehicleForm({
     },
     onDuplicate: (size: string) => setTyreSizes((list) => (list && !list.some((s) => sameTyreSize(s, size)) ? [...list, size] : list)),
   };
+  // Customer City and Customer Email (the customer's, not the vehicle's): filled in with what's saved for them, and
+  // saved with the vehicle. The city list is the City contact property's choices; "+ Add New City" adds one.
+  const [cities, setCities] = useState<string[] | null>(null);
+  const [citiesError, setCitiesError] = useState('');
+  useEffect(() => {
+    let live = true;
+    vehicleCustomerDetails(contactId)
+      .then((d) => {
+        if (!live) return;
+        setCities(d.cities);
+        // Only where nothing was typed or picked yet
+        setForm((f) => ({ ...f, city: f.city || d.city || '', email: f.email || d.email || '' }));
+      })
+      .catch((e) => {
+        if (!live) return;
+        setCities([]);
+        setCitiesError((e as Error).message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [contactId]);
+
   // A different make clears the model and year; a different model clears the year (they belonged to the old one)
   const setMake = (v: string) => setForm((f) => (v === f.make ? f : { ...f, make: v, model: '', year: '' }));
   const setModel = (v: string) => setForm((f) => (v === f.model ? f : { ...f, model: v, year: '' }));
@@ -497,6 +527,7 @@ function VehicleForm({
       remarks: form.remarks.trim() || null,
     };
     try {
+      await saveVehicleCustomerDetails(contactId, form.city.trim(), form.email.trim());
       if (vehicle) await updateVehicle(vehicle.id, details);
       else await addVehicle({ ...details, contactId });
       onSavingChange(false);
@@ -518,7 +549,7 @@ function VehicleForm({
   );
   // Shown in the gap under the field (absolute): an error appearing never pushes the rows below down
   const problem = (k: Field) => errors[k] && <p className="absolute inset-x-0 top-full mt-0.5 truncate text-[11px] leading-4 text-danger">{errors[k]}</p>;
-  const field = (k: Exclude<Field, 'remarks'>, text: string, required: boolean, span: string, extra: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
+  const field = (k: Exclude<Field, 'remarks' | 'city'>, text: string, required: boolean, span: string, extra: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <div className={`relative ${span}`}>
       {label(`vehicle-${k}`, text, required)}
       <input id={`vehicle-${k}`} autoComplete="off" value={form[k]} onChange={(e) => set(k, e.target.value)} aria-invalid={!!errors[k]} className={inputClass(!!errors[k])} {...extra} />
@@ -528,9 +559,34 @@ function VehicleForm({
 
   return (
     <form id="vehicle-form" onSubmit={submit} noValidate autoComplete="off">
-      {/* Row 1: tyre sizes · Row 2: make, model, year · Row 3: plate number, registration date — same rows on every screen size */}
+      {/* Row 1: customer city, email · Row 2: tyre sizes · Row 3: make, model, year · Row 4: plate number, registration
+          date — same rows on every screen size */}
       {/* gap-y-5: room for a field's one-line error under it */}
       <div className="grid grid-cols-6 gap-x-3 gap-y-5 sm:gap-x-4">
+        <div className="col-span-3">
+          <AddableSelect
+            id="vehicle-city"
+            label="Customer City"
+            required
+            value={form.city}
+            onChange={(v) => set('city', v)}
+            options={cities ? cities.map((c) => ({ value: c, label: c })) : null}
+            loadError={citiesError}
+            error={errors.city}
+            placeholder="Select city"
+            autoFocus={!vehicle}
+            addNewLabel="+ Add New City"
+            addPlaceholder="e.g. Al Ain"
+            addMaxLength={60}
+            onAdd={async (name) => {
+              const added = await addCity(name);
+              setCities(added.cities);
+              return added.city;
+            }}
+            onDuplicate={(name) => setCities((list) => (list && !list.some((c) => c.toLowerCase() === name.toLowerCase()) ? [...list, name] : list))}
+          />
+        </div>
+        {field('email', 'Customer Email', false, 'col-span-3', { type: 'email', inputMode: 'email', maxLength: 191, placeholder: 'e.g. name@example.com' })}
         <div className="col-span-3">
           <AddableSelect
             id="vehicle-tireSize1"
@@ -541,7 +597,6 @@ function VehicleForm({
             onChange={(v) => set('tireSize1', v)}
             error={errors.tireSize1}
             placeholder="Select tyre size"
-            autoFocus={!vehicle}
           />
         </div>
         <div className="col-span-3">

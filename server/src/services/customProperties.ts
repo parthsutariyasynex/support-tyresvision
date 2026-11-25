@@ -26,7 +26,7 @@ export const CUSTOM_TYPES = [
 ] as const;
 type CustomType = (typeof CUSTOM_TYPES)[number]['value'];
 const MAX_PROPERTIES = 50;
-const MAX_OPTIONS = 50;
+export const MAX_OPTIONS = 200; // the City list grows from the vehicle form ("+ Add New City")
 const VALUE_MAX = 500;
 const MULTILINE_MAX = 2000;
 
