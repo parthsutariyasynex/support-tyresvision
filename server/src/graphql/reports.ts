@@ -47,6 +47,11 @@ export const typeDefs = /* GraphQL */ `
     email: String
     "The City contact property (Customer City in the vehicle form); null = not set"
     city: String
+    "The chat's assignee now (Member id and name); null = unassigned"
+    agentId: ID
+    agentName: String
+    "The chat's labels now"
+    labels: [ContactReportLabel!]!
     "When the customer (contact) was created: their first chat"
     createdAt: DateTime!
     "new (still in progress) | won | lost, from the customer's lead stage now"

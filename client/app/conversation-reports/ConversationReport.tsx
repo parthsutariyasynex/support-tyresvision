@@ -11,7 +11,7 @@ import { ReportDateRangePicker } from '../ReportDateRangePicker';
 import { CountryFilter } from './CountryFilter';
 
 const PAGE_SIZE = 50;
-type TableView = 'country' | 'stage' | 'city';
+type TableView = 'country' | 'stage' | 'city' | 'label' | 'agent';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
 // are won and lost now. Chart by day (by week or month for long ranges), then a day-by-day table by lifecycle stage.
@@ -58,16 +58,20 @@ export function ConversationReport() {
   // Table: one row per day that had new customers (newest first): how many arrived that day, how many from each
   // country (by their WhatsApp number), and how many of them are won now / anything else (Others = Total − Won).
   // Only countries with customers in the range get a column, most customers first.
-  const { rows, countryCols, cityCols, totalOthers } = useMemo(() => {
-    if (!report) return { rows: [], countryCols: [], cityCols: [], totalOthers: 0 };
-    const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number>; stages: Record<string, number>; cities: Record<string, number> }>();
+  const { rows, countryCols, cityCols, labelCols, agentCols, totalOthers } = useMemo(() => {
+    if (!report) return { rows: [], countryCols: [], cityCols: [], labelCols: [], agentCols: [], totalOthers: 0 };
+    const byDay = new Map<string, { day: string; total: number; won: number; countries: Record<string, number>; stages: Record<string, number>; cities: Record<string, number>; labels: Record<string, number>; agents: Record<string, number> }>();
+    // By label: the chat's labels now ('' = none; a customer with two labels counts under both). By agent: the chat's
+    // assignee now ('' = unassigned).
+    const labelTotals = new Map<string, { key: string; name: string; color: string | null; count: number }>();
+    const agentTotals = new Map<string, { key: string; name: string; count: number }>();
     // By city: the City contact property (Customer City in the vehicle form); '' = no city set
     const cityTotals = new Map<string, number>();
     const cols = new Map<string, { key: string; name: string; flag: string | null; count: number }>();
     for (const c of report.customers) {
       const day = dayKey(c.createdAt);
       let row = byDay.get(day);
-      if (!row) byDay.set(day, (row = { day, total: 0, won: 0, countries: {}, stages: {}, cities: {} }));
+      if (!row) byDay.set(day, (row = { day, total: 0, won: 0, countries: {}, stages: {}, cities: {}, labels: {}, agents: {} }));
       row.total++;
       if (c.outcome === 'won') row.won++;
       if (c.stage) row.stages[c.stage] = (row.stages[c.stage] ?? 0) + 1;
@@ -80,6 +84,18 @@ export function ConversationReport() {
       const city = c.city?.trim() ?? '';
       row.cities[city] = (row.cities[city] ?? 0) + 1;
       cityTotals.set(city, (cityTotals.get(city) ?? 0) + 1);
+      const customerLabels = c.labels.length ? c.labels : [{ id: '', name: 'No label', color: '' }];
+      for (const l of customerLabels) {
+        row.labels[l.id] = (row.labels[l.id] ?? 0) + 1;
+        const t = labelTotals.get(l.id) ?? { key: l.id, name: l.name, color: l.color || null, count: 0 };
+        t.count++;
+        labelTotals.set(l.id, t);
+      }
+      const agent = c.agentId ?? '';
+      row.agents[agent] = (row.agents[agent] ?? 0) + 1;
+      const at = agentTotals.get(agent) ?? { key: agent, name: c.agentName ?? (agent ? 'Unknown' : 'Unassigned'), count: 0 };
+      at.count++;
+      agentTotals.set(agent, at);
     }
     return {
       rows: [...byDay.values()].sort((a, b) => (a.day < b.day ? 1 : -1)),
@@ -89,6 +105,9 @@ export function ConversationReport() {
       cityCols: [...cityTotals.entries()]
         .map(([key, count]) => ({ key, name: key || 'No city', count }))
         .sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
+      // Labels and agents with customers in these dates, most customers first; "No label" / "Unassigned" last
+      labelCols: [...labelTotals.values()].sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
+      agentCols: [...agentTotals.values()].sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
       totalOthers: report.totalNew - report.totalWon,
     };
   }, [report]);
@@ -114,7 +133,38 @@ export function ConversationReport() {
     { key: 'others', header: 'Others', csv: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
   ];
   const columns: Col[] =
-    view === 'city'
+    view === 'label'
+      ? [
+          ...labelCols.map((col) => ({
+            key: `label:${col.key}`,
+            header: col.key ? (
+              <>
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: col.color ?? undefined }} />
+                {col.name}
+              </>
+            ) : (
+              <span className="normal-case italic text-faint">No label</span>
+            ),
+            title: col.key ? undefined : "Customers whose chat has no label",
+            csv: col.name,
+            cell: (r: Row) => r.labels[col.key] ?? 0,
+            total: col.count,
+          })),
+          ...wonAndOthers,
+        ]
+      : view === 'agent'
+      ? [
+          ...agentCols.map((col) => ({
+            key: `agent:${col.key}`,
+            header: col.key ? col.name : <span className="normal-case italic text-faint">Unassigned</span>,
+            title: col.key ? `Chats assigned to ${col.name} now` : 'Chats with no assignee now',
+            csv: col.name,
+            cell: (r: Row) => r.agents[col.key] ?? 0,
+            total: col.count,
+          })),
+          ...wonAndOthers,
+        ]
+      : view === 'city'
       ? [
           ...cityCols.map((col) => ({
             key: `city:${col.key}`,
@@ -175,7 +225,7 @@ export function ConversationReport() {
     const csv = '\uFEFF' + lines.map((l) => l.map((v) => csvCell(String(v))).join(',')).join('\r\n') + '\r\n'; // BOM: Excel reads UTF-8
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = `conversation-report-${view === 'stage' ? 'by-lifecycle-stage' : view === 'city' ? 'by-city' : 'by-country'}-${range.from}-to-${range.to}.csv`;
+    a.download = `conversation-report-${view === 'stage' ? 'by-lifecycle-stage' : view === 'country' ? 'by-country' : `by-${view}`}-${range.from}-to-${range.to}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -295,6 +345,8 @@ export function ConversationReport() {
                   ['stage', 'By lifecycle stage'],
                   ['country', 'By country'],
                   ['city', 'By city'],
+                  ['label', 'By label'],
+                  ['agent', 'By agent'],
                 ] as const
               ).map(([v, label]) => (
                 <button
@@ -314,6 +366,10 @@ export function ConversationReport() {
               ? `Country columns count that day's new customers by their number's country; ${labels.won} and Others are where they are now`
               : view === 'city'
                 ? `City columns count that day's new customers by their City; ${labels.won} and Others are where they are now`
+                : view === 'label'
+                  ? `Label columns count that day's new customers by their chat's labels now (a customer with two labels counts under both); ${labels.won} and Others are where they are now`
+                  : view === 'agent'
+                    ? `Agent columns count that day's new customers by who their chat is assigned to now; ${labels.won} and Others are where they are now`
                 : "Each stage column counts that day's new customers who are on that stage now"}
           </p>
         </div>

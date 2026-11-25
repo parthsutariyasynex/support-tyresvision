@@ -63,6 +63,15 @@ export async function conversationReport(
       id: true, name: true, firstName: true, lastName: true, waId: true, email: true, leadStage: true, createdAt: true,
       // City: the City contact property (Customer City in the vehicle form, services/customerCity.ts)
       customValues: { where: { property: { key: CITY_KEY } }, select: { value: true }, take: 1 },
+      // By label / By agent: the customer's chat (one per customer) with its labels and assignee now
+      conversations: {
+        orderBy: { lastMessageAt: 'desc' },
+        take: 1,
+        select: {
+          assignedTo: { select: { id: true, user: { select: { name: true } } } },
+          labels: { select: { label: { select: { id: true, name: true, color: true, deletedAt: true } } } },
+        },
+      },
     },
   });
 
@@ -78,6 +87,11 @@ export async function conversationReport(
       waId: c.waId,
       email: c.email,
       city: c.customValues[0]?.value ?? null,
+      // The chat's assignee now (Member id and name); null = unassigned
+      agentId: c.conversations[0]?.assignedTo?.id ?? null,
+      agentName: c.conversations[0]?.assignedTo?.user.name ?? null,
+      // The chat's labels now (deleted ones left out)
+      labels: (c.conversations[0]?.labels ?? []).map((l) => l.label).filter((l) => !l.deletedAt).map(({ id, name, color }) => ({ id, name, color })),
       createdAt: c.createdAt,
       outcome: outcomeOf(c.leadStage),
       // The stage's value (Contact.leadStage); null = no stage, or one that no longer exists
