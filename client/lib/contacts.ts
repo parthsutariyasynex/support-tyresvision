@@ -403,10 +403,17 @@ export function propertyTypeLabel(row: Pick<PropertyRow, 'key' | 'kind' | 'custo
 }
 
 // Keys in a view's order: the ones placed (in that order), then any others in the standard order (e.g. a property
-// added later), so nothing is lost
+// added later), so nothing is lost. Exception: the City property (made by the vehicle form, server
+// services/customerCity.ts) goes just above Email until someone places it themselves.
+const CITY_PROPERTY = 'custom:city';
 export function orderKeys(allKeys: string[], order: string[]) {
   const known = order.filter((k) => allKeys.includes(k));
-  return [...known, ...allKeys.filter((k) => !known.includes(k))];
+  const keys = [...known, ...allKeys.filter((k) => !known.includes(k) && k !== CITY_PROPERTY)];
+  if (allKeys.includes(CITY_PROPERTY) && !known.includes(CITY_PROPERTY)) {
+    const email = keys.indexOf('email');
+    keys.splice(email === -1 ? keys.length : email, 0, CITY_PROPERTY);
+  }
+  return keys;
 }
 
 // The rows as your view shows them: the workspace default view, or your personal view; hidden ones left out

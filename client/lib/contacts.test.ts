@@ -181,3 +181,13 @@ test('custom properties: key from the name, rows by type, renamed standard prope
   assert.deepEqual([company.label, company.originalLabel], ['Garage name', 'Company name']);
   assert.equal(withLabels(std, []), std);
 });
+
+test('property order: City goes above Email until someone places it', () => {
+  const all = ['firstName', 'lastName', 'email', 'phone', 'custom:tyre_size', 'custom:city'];
+  assert.deepEqual(orderKeys(all, []), ['firstName', 'lastName', 'custom:city', 'email', 'phone', 'custom:tyre_size']);
+  assert.deepEqual(orderKeys(all, ['phone', 'email', 'firstName']), ['phone', 'custom:city', 'email', 'firstName', 'lastName', 'custom:tyre_size']);
+  // Placed by an admin or in a personal view: kept where they put it
+  assert.deepEqual(orderKeys(all, ['email', 'custom:city']), ['email', 'custom:city', 'firstName', 'lastName', 'phone', 'custom:tyre_size']);
+  // Email hidden from the list of keys: City at the end, as before
+  assert.deepEqual(orderKeys(['firstName', 'custom:city'], []), ['firstName', 'custom:city']);
+});
