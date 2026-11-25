@@ -10,7 +10,7 @@ import { CountryFilter } from '../conversation-reports/CountryFilter';
 import { ReportDateRangePicker } from '../ReportDateRangePicker';
 import { CheckMenu } from './CheckMenu';
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 50;
 
 // Contact Reports: every customer with their number, name, contacted date (added), status (lifecycle stage), labels
 // and vehicles (tyre size 1 and 2, make, model). Filters narrow the list as you change them (typed ones shortly
@@ -316,7 +316,7 @@ export function ContactReport() {
                 // One line per vehicle in the vehicle columns (a dash when the customer has none)
                 const vehicleCell = (pick: (v: Report['contacts'][number]['vehicles'][number]) => string | null) =>
                   c.vehicles.length ? (
-                    <div className="space-y-1">
+                    <div className="space-y-0.5">
                       {c.vehicles.map((v, i) => (
                         <p key={i} className="whitespace-nowrap">
                           {pick(v) || <span className="text-line-strong">–</span>}
@@ -328,7 +328,7 @@ export function ContactReport() {
                   );
                 return (
                   <tr key={c.id} className="align-top transition hover:bg-surface-muted/60">
-                    <td className="py-3 pl-5 pr-3">
+                    <td className="py-1.5 pl-5 pr-3">
                       {c.conversationId ? (
                         <Link href={`/inbox?chat=${encodeURIComponent(c.conversationId)}`} title="Open chat" className="font-semibold text-primary hover:underline">
                           {name}
@@ -339,17 +339,17 @@ export function ContactReport() {
                         </span>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-3 text-body tabular-nums">+{c.waId}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-body">{c.city ?? <span className="text-faint">–</span>}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-body tabular-nums">+{c.waId}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-body">{c.city ?? <span className="text-faint">–</span>}</td>
                     {/* Date and time the customer was added (Dubai time, like the rest of the app) */}
-                    <td className="whitespace-nowrap px-3 py-3 text-body">
+                    <td className="whitespace-nowrap px-3 py-1.5 text-body">
                       {longDay(dayKey(c.createdAt))}
                       <span className="ml-1.5 text-muted tabular-nums">{formatTime(c.createdAt, 'en-US')}</span>
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-1.5">
                       {c.stageLabel ? (
                         <span
-                          className="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                          className="inline-flex whitespace-nowrap rounded-full px-2 py-px text-[11px] font-semibold"
                           style={{ color: c.stageColor ?? undefined, backgroundColor: `${c.stageColor}1a`, boxShadow: `inset 0 0 0 1px ${c.stageColor}55` }}
                         >
                           {c.stageLabel}
@@ -358,11 +358,11 @@ export function ContactReport() {
                         <span className="text-line-strong">–</span>
                       )}
                     </td>
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-1.5">
                       {c.labels.length ? (
                         <div className="flex max-w-56 flex-wrap gap-1">
                           {c.labels.map((l) => (
-                            <span key={l.id} className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-line px-1.5 py-0.5 text-[11px] font-medium text-body">
+                            <span key={l.id} className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-line px-1.5 py-px text-[11px] font-medium text-body">
                               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: l.color }} />
                               {l.name}
                             </span>
@@ -372,10 +372,10 @@ export function ContactReport() {
                         <span className="text-line-strong">–</span>
                       )}
                     </td>
-                    <td className="px-3 py-3 font-medium text-ink tabular-nums">{vehicleCell((v) => v.tireSize1)}</td>
-                    <td className="px-3 py-3 font-medium text-ink tabular-nums">{vehicleCell((v) => v.tireSize2)}</td>
-                    <td className="px-3 py-3 text-body">{vehicleCell((v) => v.make)}</td>
-                    <td className="py-3 pl-3 pr-5 text-body">{vehicleCell((v) => [v.model, v.year].filter(Boolean).join(' '))}</td>
+                    <td className="px-3 py-1.5 font-medium text-ink tabular-nums">{vehicleCell((v) => v.tireSize1)}</td>
+                    <td className="px-3 py-1.5 font-medium text-ink tabular-nums">{vehicleCell((v) => v.tireSize2)}</td>
+                    <td className="px-3 py-1.5 text-body">{vehicleCell((v) => v.make)}</td>
+                    <td className="py-1.5 pl-3 pr-5 text-body">{vehicleCell((v) => [v.model, v.year].filter(Boolean).join(' '))}</td>
                   </tr>
                 );
               })}
