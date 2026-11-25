@@ -26,6 +26,8 @@ export function ContactReport() {
   const [model, setModel] = useState('');
   const [tyreSize, setTyreSize] = useState('');
   const [page, setPage] = useState(1);
+  // Contacted date column: newest first (default) or oldest first; the server sorts, so every page and the CSV follow it
+  const [sort, setSort] = useState<'newest' | 'oldest'>('newest');
 
   // Typed filters wait until you stop typing
   const [typed, setTyped] = useState({ search: '', model: '', tyreSize: '' });
@@ -55,6 +57,7 @@ export function ContactReport() {
         make,
         page,
         pageSize: PAGE_SIZE,
+        sort,
       });
       if (seq === loadSeq.current) setReport(next);
     } catch (err) {
@@ -62,7 +65,7 @@ export function ContactReport() {
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [typed, range, countries, stages, labelIds, make, page]);
+  }, [typed, range, countries, stages, labelIds, make, page, sort]);
 
   useEffect(() => {
     load();
@@ -83,6 +86,7 @@ export function ContactReport() {
         stages,
         labelIds,
         make,
+        sort,
       });
     } catch (err) {
       setError((err as Error).message);
@@ -92,7 +96,7 @@ export function ContactReport() {
   }
 
   // A new filter starts again on page 1
-  useEffect(() => setPage(1), [typed, range, countries, stages, labelIds, make]);
+  useEffect(() => setPage(1), [typed, range, countries, stages, labelIds, make, sort]);
 
   const filtered = !!(search || range || countries.length || stages.length || labelIds.length || make || model || tyreSize);
   const clearAll = () => {
@@ -270,7 +274,19 @@ export function ContactReport() {
                 <th className="whitespace-nowrap py-3 pl-5 pr-3">Customer name</th>
                 <th className="whitespace-nowrap px-3 py-3">Customer number</th>
                 <th className="whitespace-nowrap px-3 py-3">City</th>
-                <th className="whitespace-nowrap px-3 py-3">Contacted date</th>
+                <th className="whitespace-nowrap px-3 py-3" aria-sort={sort === 'newest' ? 'descending' : 'ascending'}>
+                  <button
+                    type="button"
+                    onClick={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
+                    title={sort === 'newest' ? 'Newest first: click for oldest first' : 'Oldest first: click for newest first'}
+                    className="inline-flex items-center gap-1 uppercase tracking-wider hover:text-ink"
+                  >
+                    Contacted date
+                    <svg className={`h-3 w-3 transition-transform ${sort === 'oldest' ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 5v14M19 12l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </th>
                 <th className="whitespace-nowrap px-3 py-3">Status</th>
                 <th className="whitespace-nowrap px-3 py-3">Label</th>
                 <th className="whitespace-nowrap px-3 py-3">Tyre size 1</th>

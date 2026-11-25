@@ -163,13 +163,14 @@ export type ContactReportFilter = {
   make?: string;
   model?: string;
   tyreSize?: string;
+  sort?: 'newest' | 'oldest';
   page?: number;
   pageSize?: number;
 };
 
 export async function fetchContactReport(f: ContactReportFilter) {
-  const query = `query ContactReport($search: String, $from: DateTime, $to: DateTime, $countries: [String!], $stages: [String!], $labelIds: [ID!], $make: String, $model: String, $tyreSize: String, $page: Int, $pageSize: Int) {
-    contactReport(search: $search, from: $from, to: $to, countries: $countries, stages: $stages, labelIds: $labelIds, make: $make, model: $model, tyreSize: $tyreSize, page: $page, pageSize: $pageSize) {
+  const query = `query ContactReport($search: String, $from: DateTime, $to: DateTime, $countries: [String!], $stages: [String!], $labelIds: [ID!], $make: String, $model: String, $tyreSize: String, $sort: String, $page: Int, $pageSize: Int) {
+    contactReport(search: $search, from: $from, to: $to, countries: $countries, stages: $stages, labelIds: $labelIds, make: $make, model: $model, tyreSize: $tyreSize, sort: $sort, page: $page, pageSize: $pageSize) {
       total page pageSize
       contacts { id conversationId name waId city createdAt stage stageLabel stageColor labels { id name color } vehicles { make model year tireSize1 tireSize2 } }
       stages { value label color }
@@ -190,6 +191,7 @@ export async function fetchContactReport(f: ContactReportFilter) {
       make: str(f.make),
       model: str(f.model),
       tyreSize: str(f.tyreSize),
+      sort: f.sort ?? 'newest',
       page: f.page ?? 1,
       pageSize: f.pageSize ?? 25,
     })
@@ -211,5 +213,6 @@ export function downloadContactReportCsv(f: ContactReportFilter) {
   set('make', f.make);
   set('model', f.model);
   set('tyreSize', f.tyreSize);
+  set('sort', f.sort);
   return downloadCsv('contacts.csv', params, 'contact-report.csv');
 }

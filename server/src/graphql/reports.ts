@@ -172,6 +172,8 @@ export const typeDefs = /* GraphQL */ `
       make: String
       model: String
       tyreSize: String
+      "Contacted date order: newest (default) or oldest"
+      sort: String
       page: Int
       pageSize: Int
     ): ContactReport!

@@ -37,6 +37,7 @@ reportsRouter.get('/contacts.csv', async (req, res) => {
     make: textParam(req.query.make),
     model: textParam(req.query.model),
     tyreSize: textParam(req.query.tyreSize),
+    sort: textParam(req.query.sort),
   });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="contact-report-${dubaiDay(new Date())}.csv"`);

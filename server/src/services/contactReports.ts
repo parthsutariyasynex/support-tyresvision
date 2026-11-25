@@ -35,6 +35,8 @@ export type ContactReportFilter = {
   make?: string | null;
   model?: string | null;
   tyreSize?: string | null;
+  // Contacted date order: 'newest' (default) or 'oldest' first
+  sort?: string | null;
   page?: number | null;
   pageSize?: number | null;
 };
@@ -92,10 +94,12 @@ function contactWhere(auth: AuthPayload, filter: ContactReportFilter): Prisma.Co
 type Stage = Awaited<ReturnType<typeof listLeadStages>>[number];
 
 // One page of customers (newest first), with their stage, the latest chat's labels and their vehicles
-async function contactRows(where: Prisma.ContactWhereInput, skip: number, take: number, stages: Stage[]) {
+const orderOf = (sort: string | null | undefined): 'asc' | 'desc' => (sort === 'oldest' ? 'asc' : 'desc');
+
+async function contactRows(where: Prisma.ContactWhereInput, skip: number, take: number, stages: Stage[], order: 'asc' | 'desc' = 'desc') {
   const rows = await prisma.contact.findMany({
     where,
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    orderBy: [{ createdAt: order }, { id: order }],
     skip,
     take,
     select: {
@@ -150,7 +154,7 @@ export async function contactReport(auth: AuthPayload, filter: ContactReportFilt
 
   const [total, contacts, labels, makes] = await Promise.all([
     prisma.contact.count({ where }),
-    contactRows(where, (page - 1) * pageSize, pageSize, stages),
+    contactRows(where, (page - 1) * pageSize, pageSize, stages, orderOf(filter.sort)),
     prisma.label.findMany({ where: { workspaceId: auth.workspaceId, deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true, color: true } }),
     prisma.vehicle.findMany({
       where: { workspaceId: auth.workspaceId, deletedAt: null, make: { not: null }, contact: { deletedAt: null } },
@@ -185,7 +189,7 @@ export async function contactReportCsv(auth: AuthPayload, filter: ContactReportF
   const lines = [CONTACT_CSV_COLUMNS.map(csvCell).join(',')];
   const batch = 1000;
   for (let skip = 0; skip < CONTACT_REPORT_CSV_MAX_ROWS; skip += batch) {
-    const rows = await contactRows(where, skip, Math.min(batch, CONTACT_REPORT_CSV_MAX_ROWS - skip), stages);
+    const rows = await contactRows(where, skip, Math.min(batch, CONTACT_REPORT_CSV_MAX_ROWS - skip), stages, orderOf(filter.sort));
     for (const c of rows) {
       // Empty when no vehicle has it; "—" holds the place of a vehicle without it so the columns still line up
       const v = (pick: (x: (typeof c.vehicles)[number]) => string | number | null | undefined) => {
