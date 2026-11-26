@@ -46,6 +46,7 @@ export function ConversationReport() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  const dragScroll = useDragScroll();
   // The "New customers, won and lost" graph: hidden until opened from the Total New Customers card
   const [showChart, setShowChart] = useState(false);
   // "New customers by day" table: columns by lifecycle stage (shown first, every time the page opens) or by country
@@ -435,7 +436,8 @@ export function ConversationReport() {
                 : "Each stage column counts that day's new customers who are on that stage now"}
           </p>
         </div>
-        <div className="max-h-[70vh] overflow-auto">
+        <div {...dragScroll} className="max-h-[70vh] cursor-grab overflow-auto">
+          {/* Drag with the mouse to scroll the table (sideways and up/down) */}
           {/* border-separate: borders stay with pinned cells while scrolling (collapsed borders don't) */}
           <table className="w-full border-separate border-spacing-0 text-left text-xs">
             <thead>
@@ -539,6 +541,51 @@ export function ConversationReport() {
 }
 
 // A count in the table: a pill (in the Won stage's colour for Won, neutral otherwise), or a dash for none
+// Drag to scroll: hold the mouse button on the table and move it to scroll the box (drag left to see the columns
+// on the right, like a map). Mouse only: touch and pens already scroll natively. A press that barely moves is still
+// a normal click (the Date heading's sort button keeps working); after a real drag the click is swallowed.
+function useDragScroll() {
+  const drag = useRef<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    const el = e.currentTarget;
+    drag.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop, moved: false };
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved) {
+      if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+      d.moved = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.currentTarget.style.cursor = 'grabbing';
+      e.currentTarget.style.userSelect = 'none';
+    }
+    e.currentTarget.scrollLeft = d.left - dx;
+    e.currentTarget.scrollTop = d.top - dy;
+  };
+  const end = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    e.currentTarget.style.cursor = '';
+    e.currentTarget.style.userSelect = '';
+    if (!d.moved) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    // Swallow the click that follows the drag, so letting go over a button doesn't press it
+    const el = e.currentTarget;
+    const swallow = (ev: MouseEvent) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+    };
+    el.addEventListener('click', swallow, { capture: true, once: true });
+    setTimeout(() => el.removeEventListener('click', swallow, { capture: true }), 0);
+  };
+  return { onPointerDown, onPointerMove, onPointerUp: end, onPointerCancel: end };
+}
+
 function Count({ n, color }: { n: number; color?: string }) {
   if (!n) return <span className="text-line-strong">–</span>;
   if (!color)
