@@ -26,6 +26,8 @@ export function ConversationReport() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  // The "New customers, won and lost" graph: hidden until opened from the Total New Customers card
+  const [showChart, setShowChart] = useState(false);
   // "New customers by day" table: columns by lifecycle stage (shown first, every time the page opens) or by country
   const [view, setView] = useState<TableView>('stage');
   const [dateSort, setDateSort] = useState<'desc' | 'asc'>('desc');
@@ -320,28 +322,57 @@ export function ConversationReport() {
 
       {/* Totals */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile label="Total New Customers" value={report?.totalNew} color={colors.new} note={`${longDay(range.from)} – ${longDay(range.to)}`} />
+        <Tile
+          label="Total New Customers"
+          value={report?.totalNew}
+          color={colors.new}
+          note={`${longDay(range.from)} – ${longDay(range.to)}`}
+          action={
+            <button
+              type="button"
+              onClick={() => setShowChart((v) => !v)}
+              aria-expanded={showChart}
+              aria-controls="outcome-chart"
+              title={showChart ? 'Hide the graph' : 'Show the graph of new customers, won and lost by day'}
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition ${
+                showChart ? 'border-primary bg-primary text-on-primary hover:bg-primary-hover' : 'border-line bg-surface text-body hover:bg-surface-strong'
+              }`}
+            >
+              {/* Small line-chart icon */}
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M2 2v12h12" />
+                <path d="M4.5 10.5 7 7.5l2 2 4-5" />
+              </svg>
+              {showChart ? 'Hide graph' : 'Show graph'}
+              <svg viewBox="0 0 16 16" className={`h-3 w-3 transition-transform ${showChart ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="m4 6 4 4 4-4" />
+              </svg>
+            </button>
+          }
+        />
         <Tile label={`Total ${labels.won}`} value={report?.totalWon} color={colors.won} note={`${pct(report?.totalWon ?? 0)}% of new customers`} />
         <Tile label={`Total ${labels.lost}`} value={report?.totalLost} color={colors.lost} note={`${pct(report?.totalLost ?? 0)}% of new customers`} />
         <Tile label="Still in progress" value={report?.totalOpen} note="Neither won nor lost yet" />
       </section>
 
-      {/* Chart */}
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-xs sm:p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-bold text-ink">New customers, {labels.won.toLowerCase()} and {labels.lost.toLowerCase()}</h3>
-          <div className="flex flex-wrap items-center gap-4 text-xs text-body">
-            <Legend color={colors.new} label="Total" />
-            <Legend color={colors.won} label={labels.won} />
-            <Legend color={colors.lost} label={labels.lost} />
+      {/* Chart: only when opened with Show graph on the Total New Customers card */}
+      {showChart && (
+        <section id="outcome-chart" className="rounded-2xl border border-line bg-surface p-5 shadow-xs sm:p-6">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-bold text-ink">New customers, {labels.won.toLowerCase()} and {labels.lost.toLowerCase()}</h3>
+            <div className="flex flex-wrap items-center gap-4 text-xs text-body">
+              <Legend color={colors.new} label="Total" />
+              <Legend color={colors.won} label={labels.won} />
+              <Legend color={colors.lost} label={labels.lost} />
+            </div>
           </div>
-        </div>
-        {report ? (
-          <OutcomeChart report={report} from={range.from} to={range.to} labels={labels} />
-        ) : (
-          <div className="flex h-72 items-center justify-center text-xs text-muted">{error ? 'No data' : 'Loading chart…'}</div>
-        )}
-      </section>
+          {report ? (
+            <OutcomeChart report={report} from={range.from} to={range.to} labels={labels} />
+          ) : (
+            <div className="flex h-72 items-center justify-center text-xs text-muted">{error ? 'No data' : 'Loading chart…'}</div>
+          )}
+        </section>
+      )}
 
       {/* Day-by-day table: new customers per day, by country (with Won and Others) or by lifecycle stage */}
       <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-xs">
@@ -503,17 +534,20 @@ function Count({ n, color }: { n: number; color?: string }) {
   );
 }
 
-function Tile({ label, value, color, note }: { label: string; value: number | undefined; color?: string; note: string }) {
+function Tile({ label, value, color, note, action }: { label: string; value: number | undefined; color?: string; note: string; action?: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-line bg-surface p-4 shadow-xs">
-      <div className="flex items-center gap-1.5">
-        {color && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />}
-        <p className="text-[11px] font-medium text-muted">{label}</p>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4 shadow-xs">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          {color && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />}
+          <p className="text-[11px] font-medium text-muted">{label}</p>
+        </div>
+        <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums" style={{ color: color ?? 'var(--color-ink)' }}>
+          {value ?? '–'}
+        </p>
+        <p className="mt-0.5 text-[10px] text-faint">{note}</p>
       </div>
-      <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums" style={{ color: color ?? 'var(--color-ink)' }}>
-        {value ?? '–'}
-      </p>
-      <p className="mt-0.5 text-[10px] text-faint">{note}</p>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
