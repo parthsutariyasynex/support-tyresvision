@@ -12,6 +12,10 @@ import { CountryFilter } from './CountryFilter';
 
 const PAGE_SIZE = 50;
 type TableView = 'country' | 'stage' | 'city' | 'label' | 'agent';
+// By city: the 7 UAE emirates always get their own column (as in the vehicle form's city list); any other city
+// is counted under Other Cities
+const UAE_CITIES = ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'];
+const OTHER_CITIES = 'Other Cities';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
 // are won and lost now. Chart by day (by week or month for long ranges), then a day-by-day table by lifecycle stage.
@@ -81,7 +85,9 @@ export function ConversationReport() {
       if (!col) cols.set(key, (col = { key, name: country?.name ?? 'Unknown', flag: country?.flag ?? null, count: 0 }));
       col.count++;
       row.countries[key] = (row.countries[key] ?? 0) + 1;
-      const city = c.city?.trim() ?? '';
+      // One of the 7 emirates (any case), else "Other Cities"; '' = no city set
+      const rawCity = c.city?.trim() ?? '';
+      const city = rawCity ? (UAE_CITIES.find((u) => u.toLowerCase() === rawCity.toLowerCase()) ?? OTHER_CITIES) : '';
       row.cities[city] = (row.cities[city] ?? 0) + 1;
       cityTotals.set(city, (cityTotals.get(city) ?? 0) + 1);
       const customerLabels = c.labels.length ? c.labels : [{ id: '', name: 'No label', color: '' }];
@@ -101,10 +107,8 @@ export function ConversationReport() {
       rows: [...byDay.values()].sort((a, b) => (a.day < b.day ? 1 : -1)),
       // Most customers first; Unknown (a number no country matches) last
       countryCols: [...cols.values()].sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
-      // Cities with customers in these dates, most customers first; "No city" last
-      cityCols: [...cityTotals.entries()]
-        .map(([key, count]) => ({ key, name: key || 'No city', count }))
-        .sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
+      // Always the 7 emirates in that order (0 when none), then Other Cities, then "No city" when some have none
+      cityCols: [...UAE_CITIES, OTHER_CITIES, ...(cityTotals.has('') ? [''] : [])].map((key) => ({ key, name: key || 'No city', count: cityTotals.get(key) ?? 0 })),
       // Labels and agents with customers in these dates, most customers first; "No label" / "Unassigned" last
       labelCols: [...labelTotals.values()].sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
       agentCols: [...agentTotals.values()].sort((a, b) => Number(a.key === '') - Number(b.key === '') || b.count - a.count || a.name.localeCompare(b.name)),
@@ -169,7 +173,12 @@ export function ConversationReport() {
           ...cityCols.map((col) => ({
             key: `city:${col.key}`,
             header: col.key ? col.name : <span className="normal-case italic text-faint">No city</span>,
-            title: col.key ? undefined : 'Customers with no City set (Customer City in the vehicle form, or the Contact property panel)',
+            title:
+              col.key === OTHER_CITIES
+                ? 'Customers whose City is outside the 7 UAE emirates'
+                : col.key
+                  ? undefined
+                  : 'Customers with no City set (Customer City in the vehicle form, or the Contact property panel)',
             csv: col.name,
             cell: (r: Row) => r.cities[col.key] ?? 0,
             total: col.count,
