@@ -16,6 +16,26 @@ type TableView = 'country' | 'stage' | 'city' | 'label' | 'agent';
 // is counted under Other Cities
 const UAE_CITIES = ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'];
 const OTHER_CITIES = 'Other Cities';
+// "New customers by day" table: Day of week, Date and Total stay on the left and Won and Others on the right while the
+// columns between them scroll sideways (on wider screens; on phones only the heading row stays). The heading row stays
+// on top and the totals row at the bottom while the days scroll. Fixed widths, so each pinned column knows its offset.
+const STICKY = {
+  day: 'w-[120px] min-w-[120px] md:sticky md:left-0',
+  date: 'w-[130px] min-w-[130px] md:sticky md:left-[120px]',
+  total: 'w-[80px] min-w-[80px] md:sticky md:left-[250px] md:border-r md:border-r-line',
+  won: 'w-[96px] min-w-[96px] md:sticky md:right-[96px]',
+  others: 'w-[96px] min-w-[96px] md:sticky md:right-0',
+};
+// Every heading cell stays on top; a pinned one (left or right) also stays above the scrolling ones
+const TH = 'sticky top-0 z-20 border-b border-b-line bg-surface-muted';
+const TH_PIN = 'md:z-30';
+// Day rows: cells carry the row line and background (so pinned cells cover what scrolls under them)
+const TD = 'border-b border-b-line-soft bg-surface transition group-last:border-b-0 group-hover:bg-surface-muted';
+const TD_PIN = 'md:z-10';
+// Totals row: stays at the bottom
+const TF = 'sticky bottom-0 z-20 border-t-2 border-t-line bg-surface-muted';
+const TF_PIN = 'md:z-30';
+const DIVIDER = 'border-l border-l-line';
 
 // Conversation Reports: new customers in the chosen range (their first chat started then), and of those how many
 // are won and lost now. Chart by day (by week or month for long ranges), then a day-by-day table by lifecycle stage.
@@ -120,7 +140,8 @@ export function ConversationReport() {
   // The table's columns after Day / Date / Total: by country (then Won and Others), or by lifecycle stage (every
   // stage in Settings order, each in its colour). Both come from the same data, so switching is instant.
   type Row = (typeof rows)[number];
-  type Col = { key: string; header: React.ReactNode; csv: string; title?: string; cell: (r: Row) => number; total: number; color?: string; divider?: boolean };
+  // sticky: classes that pin the column to the right edge while the middle columns scroll (Won and Others)
+  type Col = { key: string; header: React.ReactNode; csv: string; title?: string; cell: (r: Row) => number; total: number; color?: string; divider?: boolean; sticky?: string };
   const wonAndOthers: Col[] = [
     {
       key: 'won',
@@ -135,8 +156,9 @@ export function ConversationReport() {
       total: report?.totalWon ?? 0,
       color: colors.won,
       divider: true,
+      sticky: STICKY.won,
     },
-    { key: 'others', header: 'Others', csv: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers },
+    { key: 'others', header: 'Others', csv: 'Others', title: 'Every other lifecycle stage (and no stage): Total minus Won', cell: (r: Row) => r.total - r.won, total: totalOthers, sticky: STICKY.others },
   ];
   const columns: Col[] =
     view === 'label'
@@ -413,12 +435,13 @@ export function ConversationReport() {
                 : "Each stage column counts that day's new customers who are on that stage now"}
           </p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="max-h-[70vh] overflow-auto">
+          {/* border-separate: borders stay with pinned cells while scrolling (collapsed borders don't) */}
+          <table className="w-full border-separate border-spacing-0 text-left text-xs">
             <thead>
-              <tr className="border-b border-line bg-surface-muted/50 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                <th className="whitespace-nowrap py-3 pl-5 pr-3">Day of week</th>
-                <th className="whitespace-nowrap px-3 py-3" aria-sort={dateSort === 'desc' ? 'descending' : 'ascending'}>
+              <tr className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                <th className={`whitespace-nowrap py-3 pl-5 pr-3 ${TH} ${TH_PIN} ${STICKY.day}`}>Day of week</th>
+                <th className={`whitespace-nowrap px-3 py-3 ${TH} ${TH_PIN} ${STICKY.date}`} aria-sort={dateSort === 'desc' ? 'descending' : 'ascending'}>
                   <button
                     type="button"
                     onClick={() => {
@@ -434,16 +457,16 @@ export function ConversationReport() {
                     </svg>
                   </button>
                 </th>
-                <th className="whitespace-nowrap px-3 py-3 text-center">Total</th>
+                <th className={`whitespace-nowrap px-3 py-3 text-center ${TH} ${TH_PIN} ${STICKY.total}`}>Total</th>
                 {/* By country: countries with new customers in these dates, then Won and Others; by stage: every stage */}
                 {columns.map((col, i) => (
-                  <th key={col.key} title={col.title} className={`whitespace-nowrap py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                  <th key={col.key} title={col.title} className={`whitespace-nowrap py-3 text-center ${cellPad(i)} ${TH} ${col.divider ? DIVIDER : ''} ${col.sticky ? `${TH_PIN} ${col.sticky}` : ''}`}>
                     <span className="inline-flex items-center gap-1.5">{col.header}</span>
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-soft">
+            <tbody>
               {!report && !error && (
                 <tr>
                   <td colSpan={tableCols} className="py-12 text-center text-muted">
@@ -460,12 +483,12 @@ export function ConversationReport() {
                 </tr>
               )}
               {pageRows.map((r) => (
-                <tr key={r.day} className="align-middle transition hover:bg-surface-muted/60">
-                  <td className="whitespace-nowrap py-1.5 pl-5 pr-3 font-semibold text-ink">{weekdayName(r.day)}</td>
-                  <td className="whitespace-nowrap px-3 py-1.5 font-medium text-ink">{longDay(r.day)}</td>
-                  <td className="px-3 py-1.5 text-center text-sm font-bold text-ink tabular-nums">{r.total}</td>
+                <tr key={r.day} className="group align-middle">
+                  <td className={`whitespace-nowrap py-1.5 pl-5 pr-3 font-semibold text-ink ${TD} ${TD_PIN} ${STICKY.day}`}>{weekdayName(r.day)}</td>
+                  <td className={`whitespace-nowrap px-3 py-1.5 font-medium text-ink ${TD} ${TD_PIN} ${STICKY.date}`}>{longDay(r.day)}</td>
+                  <td className={`px-3 py-1.5 text-center text-sm font-bold text-ink tabular-nums ${TD} ${TD_PIN} ${STICKY.total}`}>{r.total}</td>
                   {columns.map((col, i) => (
-                    <td key={col.key} className={`py-1.5 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                    <td key={col.key} className={`py-1.5 text-center ${cellPad(i)} ${TD} ${col.divider ? DIVIDER : ''} ${col.sticky ? `${TD_PIN} ${col.sticky}` : ''}`}>
                       <Count n={col.cell(r)} color={col.color} />
                     </td>
                   ))}
@@ -475,13 +498,13 @@ export function ConversationReport() {
             {/* Totals for the whole range */}
             {report && rows.length > 0 && (
               <tfoot>
-                <tr className="border-t-2 border-line bg-surface-muted/50">
-                  <td colSpan={2} className="py-3 pl-5 pr-3 text-[11px] font-bold uppercase tracking-wider text-body">
+                <tr>
+                  <td colSpan={2} className={`whitespace-nowrap py-3 pl-5 pr-3 text-[11px] font-bold uppercase tracking-wider text-body ${TF} ${TF_PIN} md:left-0`}>
                     Total ({rows.length} {rows.length === 1 ? 'day' : 'days'})
                   </td>
-                  <td className="px-3 py-3 text-center text-sm font-bold text-ink tabular-nums">{report.totalNew}</td>
+                  <td className={`px-3 py-3 text-center text-sm font-bold text-ink tabular-nums ${TF} ${TF_PIN} ${STICKY.total}`}>{report.totalNew}</td>
                   {columns.map((col, i) => (
-                    <td key={col.key} className={`py-3 text-center ${cellPad(i)} ${col.divider ? 'border-l border-line-soft' : ''}`}>
+                    <td key={col.key} className={`py-3 text-center ${cellPad(i)} ${TF} ${col.divider ? DIVIDER : ''} ${col.sticky ? `${TF_PIN} ${col.sticky}` : ''}`}>
                       <Count n={col.total} color={col.color} />
                     </td>
                   ))}
