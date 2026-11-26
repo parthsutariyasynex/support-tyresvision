@@ -23,8 +23,8 @@ const STICKY = {
   day: 'w-[120px] min-w-[120px] md:sticky md:left-0',
   date: 'w-[130px] min-w-[130px] md:sticky md:left-[120px]',
   total: 'w-[80px] min-w-[80px] md:sticky md:left-[250px] md:border-r md:border-r-line',
-  won: 'w-[96px] min-w-[96px] md:sticky md:right-[96px]',
-  others: 'w-[96px] min-w-[96px] md:sticky md:right-0',
+  won: 'w-[72px] min-w-[72px] md:sticky md:right-[84px]',
+  others: 'w-[84px] min-w-[84px] md:sticky md:right-0',
 };
 // Every heading cell stays on top; a pinned one (left or right) also stays above the scrolling ones
 const TH = 'sticky top-0 z-20 border-b border-b-line bg-surface-muted';
