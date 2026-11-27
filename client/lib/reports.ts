@@ -48,7 +48,7 @@ export async function downloadAssignmentReportCsv(range: ReportRange = {}) {
 }
 
 // GET /reports/<file>?<params> with the signed-in user's token, saved as the file the server names
-async function downloadCsv(file: string, params: URLSearchParams, fallbackName: string) {
+export async function downloadCsv(file: string, params: URLSearchParams, fallbackName: string) {
   const token = getToken();
   const res = await fetch(`${API_URL}/reports/${file}${params.size ? `?${params}` : ''}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},

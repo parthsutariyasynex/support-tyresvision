@@ -45,6 +45,8 @@ export function settingsGroups(role: string | undefined): Group[] {
       key: 'data',
       title: 'Contacts and data',
       items: [
+        // Every customer in a grid: add, edit, delete (owners/admins), import and export (owners/admins)
+        { href: '/settings/customers', label: 'Customers' },
         { href: '/settings/labels', label: 'Labels' },
         { href: '/settings/contact-properties', label: 'Contact properties' },
         { href: '/settings/lifecycle', label: 'Customer lifecycle' },

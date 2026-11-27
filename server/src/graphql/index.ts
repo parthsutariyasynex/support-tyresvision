@@ -8,6 +8,7 @@ import * as assign from './assign.js';
 import * as automations from './automations.js';
 import * as auth from './auth.js';
 import * as contacts from './contacts.js';
+import * as customers from './customers.js';
 import * as inbox from './inbox.js';
 import * as labels from './labels.js';
 import * as location from './location.js';
@@ -27,7 +28,7 @@ import type { Context } from './shared.js';
 
 type ServerContext = { req: Request; res: Response };
 
-const modules = [shared, auth, settings, inbox, labels, assign, permissions, activity, members, quickReplies, reports, presence, contacts, automations, location, push, ai, aiRobot, vehicles, tyreSizes];
+const modules = [shared, auth, settings, inbox, labels, assign, permissions, activity, members, quickReplies, reports, presence, contacts, customers, automations, location, push, ai, aiRobot, vehicles, tyreSizes];
 
 export const yoga = createYoga<ServerContext, Context>({
   schema: createSchema<ServerContext & Context>({

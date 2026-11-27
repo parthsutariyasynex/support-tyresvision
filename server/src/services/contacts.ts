@@ -61,7 +61,7 @@ const choice = (list: readonly { value: string }[], label: string) =>
     .nullable()
     .optional();
 
-const updateSchema = z.object({
+export const updateSchema = z.object({
   firstName: text(100, 'First name'),
   lastName: text(100, 'Last name'),
   email: z

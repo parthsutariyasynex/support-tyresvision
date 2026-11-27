@@ -3,6 +3,7 @@ import { requireAuth } from '../auth.js';
 import { AppError } from '../services/errors.js';
 import { assignmentReportCsv, listAssignmentReport } from '../services/assignmentReports.js';
 import { contactReportCsv } from '../services/contactReports.js';
+import { customersCsv } from '../services/customers.js';
 import { dubaiDay } from '../time.js';
 
 // Reports export. Owners and admins only (checked in the service), signed-in with the usual Bearer token.
@@ -41,6 +42,23 @@ reportsRouter.get('/contacts.csv', async (req, res) => {
   });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="contact-report-${dubaiDay(new Date())}.csv"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(csv);
+});
+
+// GET /reports/customers.csv?search=&countries=AE,SA&cities=Dubai,Sharjah&from=&to=
+// Settings → Customers → Export: every customer the grid's filters match, with the columns Import reads
+reportsRouter.get('/customers.csv', async (req, res) => {
+  const csv = await customersCsv(req.auth!, {
+    search: textParam(req.query.search),
+    countries: listParam(req.query.countries),
+    cities: listParam(req.query.cities),
+    from: dateParam(req.query.from, 'from'),
+    to: dateParam(req.query.to, 'to'),
+    sort: textParam(req.query.sort),
+  });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="customers-${dubaiDay(new Date())}.csv"`);
   res.setHeader('Cache-Control', 'no-store');
   res.send(csv);
 });
