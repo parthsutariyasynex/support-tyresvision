@@ -177,9 +177,12 @@ function Customers({ me }: { me: Me }) {
 
   return (
     <div className="w-full">
-      {/* Top bar: search and filters on the left, Import / Export / Add on the right (wraps on narrow screens) */}
-      <div className="flex flex-wrap items-center gap-2.5">
-        <div className="relative w-full sm:w-72">
+      {/* Top bar: search and filters on the left, Import / Export / Add on the right. On wide screens the buttons
+          keep their place on the first row: the search box narrows, and if the filters still don't fit (a long date
+          range) they wrap within the left side. Narrow screens: the buttons go under the filters. */}
+      <div className="flex flex-wrap items-start gap-2.5">
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2.5 lg:w-auto lg:flex-1">
+        <div className="relative w-full sm:w-auto sm:min-w-[180px] sm:max-w-72 sm:flex-1">
           <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="8" />
             <path d="m21 21-4.3-4.3" />
@@ -245,7 +248,8 @@ function Customers({ me }: { me: Me }) {
             </svg>
           </button>
         )}
-        <div className="ml-auto flex flex-wrap items-center gap-2.5">
+        </div>
+        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2.5">
           {admin && (
             <>
               <button type="button" onClick={() => setImporting(true)} className={toolbarButton}>
