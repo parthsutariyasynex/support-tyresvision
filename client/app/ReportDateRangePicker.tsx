@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { inRange, parseYmd, pickDay, todayYmd } from '@/lib/dateRange';
 import {
   type ReportPreset,
@@ -119,6 +119,38 @@ function RangePanel({
   });
   const [view, setView] = useState<View>(() => viewFor(initial.from, today));
   const [hover, setHover] = useState('');
+  // Wider screens: the panel hangs from the button's right edge. Where that would push it past the area it sits in
+  // (e.g. behind the Settings menu, or off the window), it slides sideways to stay fully visible.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [offset, setOffset] = useState(0);
+  useLayoutEffect(() => {
+    const place = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      if (window.innerWidth < 640) return setOffset(0); // phones: fixed across the screen already
+      panel.style.transform = ''; // measure where it sits without the slide
+      const r = panel.getBoundingClientRect();
+      // The nearest ancestor that clips or scrolls (the page area beside a side menu), else the window
+      let left = 0;
+      let right = window.innerWidth;
+      for (let el = panel.parentElement?.parentElement; el && el !== document.body; el = el.parentElement) {
+        const st = getComputedStyle(el);
+        if (/auto|scroll|hidden|clip/.test(`${st.overflowX} ${st.overflowY}`)) {
+          const b = el.getBoundingClientRect();
+          left = Math.max(left, b.left);
+          right = Math.min(right, b.right);
+          break;
+        }
+      }
+      const pad = 8;
+      const next = r.left < left + pad ? left + pad - r.left : r.right > right - pad ? Math.max(right - pad - r.right, left + pad - r.left) : 0;
+      panel.style.transform = next ? `translateX(${next}px)` : '';
+      setOffset(next);
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, []);
 
   const t = parseYmd(today);
   const thisYear = t.getUTCFullYear();
@@ -152,8 +184,10 @@ function RangePanel({
 
   return (
     <div
+      ref={panelRef}
       role="dialog"
       aria-label="Choose a date range"
+      style={offset ? { transform: `translateX(${offset}px)` } : undefined}
       className="fixed inset-x-2 top-16 z-50 max-h-[calc(100vh-5rem)] overflow-auto rounded-xl border border-line bg-surface p-4 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1.5 sm:max-h-none sm:w-max sm:max-w-[calc(100vw-2rem)] sm:p-5"
     >
       <div className="flex flex-col gap-5 xl:flex-row">
