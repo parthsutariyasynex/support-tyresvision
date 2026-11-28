@@ -27,9 +27,28 @@ export function matchesQuickReply(reply: QuickReply, search: string) {
   return [reply.shortcut, reply.description].some((v) => !!v && v.toLowerCase().includes(t)) || !!category?.includes(t.replace(/_/g, ' '));
 }
 
-// The message box opens the menu when it starts with "/"; the rest is the search ("/tyresvision" -> "tyresvision")
-export function slashQuery(text: string): string | null {
-  return text.startsWith('/') ? text.slice(1) : null;
+// The "/" being typed, as in WhatsApp Business: at the start of the message or after a space or new line, up to the
+// cursor; what follows it is the search. "Hello /pri|" -> { start: 6, query: 'pri' }; "Hi\n/|" -> query ''.
+// Not a "/" right after a letter, digit or symbol (50/60, and/or, links), nor one followed straight away by a space
+// ("Hello / ") or across lines.
+export type SlashToken = { start: number; query: string };
+export const SLASH_QUERY_MAX = 60;
+export function slashAt(text: string, caret: number): SlashToken | null {
+  const before = text.slice(0, Math.max(0, Math.min(caret, text.length)));
+  const start = before.lastIndexOf('/');
+  if (start === -1) return null;
+  if (start > 0 && !/\s/.test(before[start - 1])) return null;
+  const query = before.slice(start + 1);
+  if (/^\s/.test(query) || query.includes('\n') || query.length > SLASH_QUERY_MAX) return null;
+  return { start, query };
+}
+
+// Picking a reply replaces just the "/search" (from the "/" to the cursor) with the reply's text; what was written
+// before and after it stays. Returns the new text and where the cursor goes (after the inserted reply).
+export function insertQuickReplyText(text: string, token: SlashToken, caret: number, reply: string) {
+  const before = text.slice(0, token.start);
+  const after = text.slice(Math.max(caret, token.start));
+  return { text: before + reply + after, caret: before.length + reply.length };
 }
 
 // Splits text into parts, marking each case-insensitive occurrence of `query` (for highlighting)

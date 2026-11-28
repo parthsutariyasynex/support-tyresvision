@@ -83,7 +83,7 @@ import { CollaboratorsButton } from './CollaboratorsButton';
 import { FilterMenu } from './FilterMenu';
 import { type StatusFilter, StatusMenu } from './StatusMenu';
 import { QuickReplyMenu, useQuickReplies } from './quickReplies';
-import { type QuickReply, slashQuery } from '@/lib/quickReplies';
+import { type QuickReply, insertQuickReplyText, slashAt } from '@/lib/quickReplies';
 import { enterAction, fitHeight } from '@/lib/composer';
 import { type Edit, type InlineStyle, type LineStyle, shortcutStyle, toggleInline, toggleLines } from '@/lib/formatting';
 import { dayKey, dayLabel, formatDateTime, formatTime, listTimestamp } from '@/lib/time';
@@ -2476,16 +2476,18 @@ function ChatPanel({
   }, []);
 
   const typingSender = useTypingSender(onTyping);
-  // "/" at the start of the message box opens the quick replies menu; Esc hides it until you type again
+  // Quick replies, as in WhatsApp Business: "/" at the start or after a space or new line opens the menu, and what
+  // follows it searches ("Hello /pri"). Esc hides it until you type again.
   const [quickClosed, setQuickClosed] = useState(false);
   const [quickActive, setQuickActive] = useState(0);
-  const quickSearch = !editing && !quickClosed ? slashQuery(text) : null;
   // "Add note": @ opens the list of teammates (name and email); picking one puts "@Name " at the cursor
   const [members, setMembers] = useState<WorkspaceMember[] | null>(null);
   useEffect(() => {
     if (mode === 'note' && members === null) fetchWorkspaceMembers().then(setMembers, () => setMembers([]));
   }, [mode, members]);
   const [caret, setCaret] = useState(0);
+  const quickSlash = !editing && !quickClosed ? slashAt(text, caret) : null;
+  const quickSearch = quickSlash?.query ?? null;
   // WhatsApp formatting: shown as you type (*bold*…); the small format bar appears while text in the box is selected
   const highlightRef = useRef<HTMLDivElement>(null);
   const [selecting, setSelecting] = useState(false);
@@ -2532,6 +2534,9 @@ function ChatPanel({
   }
   const quick = useQuickReplies(quickSearch);
   useEffect(() => setQuickActive(0), [quickSearch]);
+  // The menu shows while something matches; a search that matches nothing ("Hello /123") is just text, so the menu
+  // goes away and Enter sends as usual. "/" alone always shows it (the list, or "No quick replies yet").
+  const quickOpen = quickSlash !== null && (quickSearch === '' || quick.items.length > 0);
   // The message box grows with multi-line text (up to ~8 lines, then scrolls)
   useEffect(() => {
     if (inputRef.current) fitHeight(inputRef.current, 160);
@@ -2539,10 +2544,16 @@ function ChatPanel({
     if (inputRef.current && highlightRef.current) highlightRef.current.scrollTop = inputRef.current.scrollTop;
   }, [text]);
   function insertQuickReply(reply: QuickReply) {
-    const next = reply.description ?? '';
-    setText(next);
-    typingSender.onInput(next);
-    inputRef.current?.focus();
+    // Replaces just the "/search"; what was written around it stays ("Hello /pri" -> "Hello <reply>")
+    const body = reply.description ?? '';
+    const r = quickSlash ? insertQuickReplyText(text, quickSlash, caret, body) : { text: body, caret: body.length };
+    setText(r.text);
+    setCaret(r.caret);
+    typingSender.onInput(r.text);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(r.caret, r.caret);
+    });
   }
   const closeMenu = useCallback(() => setMenu(null), []);
   const clearUndo = useCallback(() => setUndo(null), []);
@@ -3513,9 +3524,9 @@ function ChatPanel({
         {mention && !isClosed && (
           <MentionMenu members={mentionItems} loading={members === null} active={mentionActive} onHover={setMentionActive} onPick={pickMention} />
         )}
-        {quickSearch !== null && !isClosed && (
+        {quickOpen && !isClosed && (
           <QuickReplyMenu
-            query={quickSearch}
+            query={quickSearch ?? ''}
             items={quick.items}
             loading={quick.loading}
             error={quick.error}
@@ -3955,7 +3966,7 @@ function ChatPanel({
                   return setMentionClosed(true);
                 }
               }
-              if (quickSearch !== null) {
+              if (quickOpen) {
                 const count = quick.items.length;
                 if (e.key === 'ArrowDown' && count) {
                   e.preventDefault();

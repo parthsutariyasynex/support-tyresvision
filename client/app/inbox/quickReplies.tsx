@@ -10,14 +10,26 @@ export function useQuickReplies(search: string | null) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const seq = useRef(0);
+  // A search that found nothing: anything longer that starts with it can't match either ("/12" after "/1"), so no
+  // request is made for it
+  const noneFor = useRef<string | null>(null);
   useEffect(() => {
     if (search === null) return;
     const n = ++seq.current;
+    const t0 = search.trim().toLowerCase();
+    if (noneFor.current && t0.startsWith(noneFor.current)) {
+      setResult({ search, items: [] });
+      setLoading(false);
+      setError('');
+      return;
+    }
+    if (!t0) noneFor.current = null;
     setLoading(true);
     const t = setTimeout(() => {
       fetchQuickReplies(search)
         .then((list) => {
           if (n !== seq.current) return;
+          if (!list.length && t0) noneFor.current = t0;
           setResult({ search, items: list });
           setError('');
         })

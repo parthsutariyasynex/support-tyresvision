@@ -1,15 +1,37 @@
 // Run: npm test --workspace=client
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { highlightParts, matchesQuickReply, slashQuery } from './quickReplies';
+import { highlightParts, insertQuickReplyText, matchesQuickReply, slashAt } from './quickReplies';
 
 describe('quick replies helpers', () => {
-  test('"/" at the start opens the menu; the rest is the search', () => {
-    assert.equal(slashQuery('/'), '');
-    assert.equal(slashQuery('/tyrescart'), 'tyrescart');
-    assert.equal(slashQuery('/Payment Options'), 'Payment Options');
-    assert.equal(slashQuery('hello /tyrescart'), null); // only at the start, like WhatsApp Business
-    assert.equal(slashQuery(''), null);
+  const at = (text: string, caret = text.length) => slashAt(text, caret)?.query ?? null;
+  test('"/" at the start, or after a space or new line, opens the menu; the rest is the search', () => {
+    assert.equal(at('/'), '');
+    assert.equal(at('/tyrescart'), 'tyrescart');
+    assert.equal(at('/Payment Options'), 'Payment Options');
+    assert.equal(at('Hello /'), ''); // like WhatsApp Business
+    assert.equal(at('Hello /price'), 'price');
+    assert.equal(at('Hi\n/'), '');
+    assert.deepEqual(slashAt('Hello /pri', 10), { start: 6, query: 'pri' });
+    assert.equal(at(''), null);
+    assert.equal(at('Hello'), null);
+  });
+  test('not a slash inside a word, number or link, nor one followed by a space', () => {
+    assert.equal(at('265/65'), null);
+    assert.equal(at('and/or'), null);
+    assert.equal(at('https://tyrescart.ae/'), null);
+    assert.equal(at('Hello / '), null);
+    assert.equal(at('Hello / thanks'), null);
+    assert.equal(at('/a\nb'), null); // the search doesn't run across lines
+  });
+  test('the search is what is before the cursor', () => {
+    assert.equal(at('Hello /price and more', 12), 'price');
+    assert.equal(at('Hello /price', 3), null);
+  });
+  test('picking a reply replaces only the "/search"', () => {
+    assert.deepEqual(insertQuickReplyText('Hello /pri', { start: 6, query: 'pri' }, 10, 'Price list'), { text: 'Hello Price list', caret: 16 });
+    assert.deepEqual(insertQuickReplyText('/', { start: 0, query: '' }, 1, 'Hi!'), { text: 'Hi!', caret: 3 });
+    assert.deepEqual(insertQuickReplyText('A /x B', { start: 2, query: 'x' }, 4, 'Y'), { text: 'A Y B', caret: 3 });
   });
 
   test('highlights every case-insensitive match and keeps the original text', () => {
@@ -60,7 +82,7 @@ describe('emojis in quick replies (client)', () => {
     assert.deepEqual(highlightParts(text, '🤗').filter((p) => p.match).map((p) => p.text), ['🤗']);
   });
   test('"/" search with emojis', () => {
-    assert.equal(slashQuery('/welcome😊'), 'welcome😊');
+    assert.equal(slashAt('/welcome😊', 10)?.query, 'welcome😊');
     const r = { id: '1', shortcut: 'referring', description: text, category: 'car_tyres' };
     assert.ok(matchesQuickReply(r, '🇦🇪'));
     assert.ok(!matchesQuickReply(r, '😊'));
